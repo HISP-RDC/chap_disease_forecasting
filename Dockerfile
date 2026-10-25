@@ -8,11 +8,11 @@ FROM ${CHAPKIT_BASE_IMAGE}
 ARG GIT_REVISION
 ARG APP_VERSION=0.0.0-dev
 
-LABEL org.opencontainers.image.title="CHAP malaria forecasting service" \
+LABEL org.opencontainers.image.title="CHAP weekly disease forecasting service" \
       org.opencontainers.image.description="XGBoost, LightGBM and controlled ensemble forecasting for CHAP" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
-      org.opencontainers.image.source="https://github.com/Ebed-meleck/chap-malaria-forecasting" \
+      org.opencontainers.image.source="https://github.com/HISP-RDC/chap_disease_forecasting" \
       org.opencontainers.image.revision="${GIT_REVISION}"
 
 USER root
@@ -40,8 +40,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     if ! id chapkit >/dev/null 2>&1; then useradd --uid 1000 --gid chapkit --no-create-home --home-dir /tmp --shell /usr/sbin/nologin chapkit; fi && \
     install -d -o chapkit -g chapkit -m 0750 /work/data /tmp/.cache
 
-COPY --chown=chapkit:chapkit --chmod=0555 deploy/start.sh /usr/local/bin/start-malaria-model
-COPY --chown=chapkit:chapkit --chmod=0444 deploy/healthcheck.py /usr/local/lib/chap-malaria-healthcheck.py
+COPY --chown=chapkit:chapkit --chmod=0555 deploy/start.sh /usr/local/bin/start-disease-model
+COPY --chown=chapkit:chapkit --chmod=0444 deploy/healthcheck.py /usr/local/lib/chap-disease-healthcheck.py
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     GIT_REVISION="${GIT_REVISION}" \
@@ -49,12 +49,12 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     MPLCONFIGDIR=/tmp \
     XDG_CACHE_HOME=/tmp/.cache \
     PYTHONUNBUFFERED=1 \
-    MALARIA_HEALTHCHECK_URL=http://127.0.0.1:8000/health
+    DISEASE_HEALTHCHECK_URL=http://127.0.0.1:8000/health
 
 USER chapkit:chapkit
 EXPOSE 8000
 
-ENTRYPOINT ["/usr/local/bin/start-malaria-model"]
+ENTRYPOINT ["/usr/local/bin/start-disease-model"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD ["python", "/usr/local/lib/chap-malaria-healthcheck.py"]
+    CMD ["python", "/usr/local/lib/chap-disease-healthcheck.py"]
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

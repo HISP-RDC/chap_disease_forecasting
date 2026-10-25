@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 
 def main() -> int:
-    url = os.environ.get("MALARIA_HEALTHCHECK_URL", "http://127.0.0.1:8000/health")
+    url = os.environ.get("DISEASE_HEALTHCHECK_URL", "http://127.0.0.1:8000/health")
     parsed = urlsplit(url)
     if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "::1", "localhost"}:
         print("health endpoint must use HTTP on the local container", file=sys.stderr)

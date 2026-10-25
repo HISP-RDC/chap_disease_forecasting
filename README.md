@@ -1,15 +1,17 @@
-# CHAP Malaria Forecasting
+# CHAP Disease Forecasting
 
 A [chapkit](https://github.com/dhis2-chap/chapkit) model service for
-[CHAP](https://github.com/dhis2-chap/chap-core) that forecasts weekly malaria
-cases up to 12 weeks ahead (as many weeks as CHAP asks for). It exposes three
-models in the DHIS2 Modeling App, all served by one container:
+[CHAP](https://github.com/dhis2-chap/chap-core) that forecasts weekly cases of
+climate-sensitive diseases, built and tested for **malaria** and **cholera**,
+up to 12 weeks ahead (as many weeks as CHAP asks for). The disease is simply
+the one in the CHAP dataset you run it on. One container exposes three models
+in the DHIS2 Modeling App:
 
-| Shown in the Modeling App                                    | Configured model                        | What it does                                                 |
-| ------------------------------------------------------------ | --------------------------------------- | ------------------------------------------------------------ |
-| Malaria Weekly Forecast (Gradient Boosting) [Xgboost]        | `chap-malaria-forecasting:xgboost`      | XGBoost, `count:poisson`, one estimator per horizon          |
-| Malaria Weekly Forecast (Gradient Boosting) [Lightgbm]       | `chap-malaria-forecasting:lightgbm`     | LightGBM, `poisson`, one estimator per horizon               |
-| Malaria Weekly Forecast (Gradient Boosting) [Best of both]   | `chap-malaria-forecasting:best_of_both` | Trains both, keeps the one with the lower out-of-sample MAE  |
+| Shown in the Modeling App                                  | Configured model                        | What it does                                                |
+| ---------------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------- |
+| Weekly Disease Forecast (Gradient Boosting) [Xgboost]      | `chap-disease-forecasting:xgboost`      | XGBoost, Tweedie objective, one estimator per horizon       |
+| Weekly Disease Forecast (Gradient Boosting) [Lightgbm]     | `chap-disease-forecasting:lightgbm`     | LightGBM, Tweedie objective, one estimator per horizon      |
+| Weekly Disease Forecast (Gradient Boosting) [Best of both] | `chap-disease-forecasting:best_of_both` | Trains both, keeps the one with the lower out-of-sample MAE |
 
 CHAP builds the displayed name as `<template> [<configuration>]` and lowercases
 all but the first letter of the configuration, hence "Xgboost".
@@ -18,62 +20,110 @@ It was built for health-zone level surveillance in the DRC (514 zones), but
 nothing in it is country-specific: any CHAP deployment with weekly case data,
 rainfall, temperature and population can use it.
 
-> **Status: `0.2.0`, assessed status orange.** The software is tested end to end
+> **Status: `0.4.0`, assessed status orange.** The software is tested end to end
 > on synthetic data only. It has not been validated scientifically on real
-> surveillance data. Run a CHAP backtest on your own data, and have it reviewed
-> by an epidemiologist, before using the forecasts for decisions.
+> surveillance data. Run a CHAP backtest on your own data, for each disease,
+> and have it reviewed by an epidemiologist before using the forecasts for
+> decisions.
 
 ## Contents
 
-- [CHAP Malaria Forecasting](#chap-malaria-forecasting)
-  - [Contents](#contents)
-  - [How it works](#how-it-works)
-  - [Compatibility](#compatibility)
-  - [Data contract](#data-contract)
-  - [Model options](#model-options)
-  - [Run it locally](#run-it-locally)
-  - [Deploy in CHAP](#deploy-in-chap)
-    - [A. With `chap-admin` (recommended)](#a-with-chap-admin-recommended)
-    - [B. With the Compose overlay](#b-with-the-compose-overlay)
-    - [Verify](#verify)
-  - [Operate it](#operate-it)
-  - [Develop and release](#develop-and-release)
-  - [Limitations](#limitations)
-  - [License](#license)
+- [Diseases](#diseases)
+- [How it works](#how-it-works)
+- [Evaluation](#evaluation)
+- [Compatibility](#compatibility)
+- [Data contract](#data-contract)
+- [Model options](#model-options)
+- [Run it locally](#run-it-locally)
+- [Deploy in CHAP](#deploy-in-chap)
+- [Operate it](#operate-it)
+- [Develop and release](#develop-and-release)
+- [Limitations](#limitations)
+- [License](#license)
+
+## Diseases
+
+The model learns each disease's dynamics from the data, so the same service
+serves both; what differs is which signals matter.
+
+| | Malaria | Cholera |
+|---|---|---|
+| Dominant signal | seasonality and recent cases | recent cases and outbreaks next door |
+| Climate delay | long: rainfall and temperature 1 to 3 months earlier (vector and parasite development) | short: rainfall in the same and previous weeks (flooding, water contamination) |
+| Spatial spread | regional transmission | strong: outbreaks travel between neighbouring zones |
+| Counts | seasonal, moderately overdispersed | many zero weeks, sudden peaks |
+| Features that address it | climate lags to 12 weeks, 16-week windows, seasonality | climate at lag 0 and anomalies, case growth, neighbour incidence, Tweedie objective |
+
+Other weekly, climate-sensitive diseases with the same data (dengue, typhoid,
+diarrhoeal diseases) can run on it too, but have not been tested. Evaluate them
+with a CHAP backtest first.
 
 ## How it works
 
 ```mermaid
 flowchart LR
     DHIS2[DHIS2 Modeling App] --> Core[CHAP Core]
-    Core -- "POST /api/v1/ml/$train, $predict" --> Svc[chap-malaria-forecasting]
+    Core -- "POST /api/v1/ml/$train, $predict (+ polygons)" --> Svc[chap-disease-forecasting]
     Svc -- "self-registration + keepalive" --> Core
     Svc --- DB[(SQLite volume<br/>/work/data)]
 ```
 
-- **Direct multi-horizon.** One model per horizon (t+1, t+2, t+3). Predicted
-  values are never fed back as if they were observations.
+- **Direct multi-horizon.** One model per forecast week. Predicted values are
+  never fed back as if they were observations.
 - **Causal features, per zone.** Case lags (1, 2, 3, 4, 8, 52 weeks), rolling
-  means and standard deviations shifted by one week, incidence per population,
-  rainfall and temperature lagged 1 to 12 weeks, seasonal sin/cos, zone
-  identifier and missing-value indicators. No window ever includes the week
-  being predicted.
-- **Selection without look-ahead.** The `auto` model ranks engines on a
+  means and standard deviations, current incidence and growth rates over 1 and
+  4 weeks; rainfall and temperature from the origin week back 12 weeks, 4 to
+  16-week means and anomalies against the zone's own history; seasonality, zone
+  identifier, missing-value indicators. Every feature uses data up to the
+  forecast origin only.
+- **Neighbours.** When the CHAP dataset has polygons (CHAP sends them with each
+  request), each zone gets its 5 nearest neighbours by centroid distance, and
+  their incidence, recent level and growth become features. The graph is stored
+  with the trained model, so predictions do not depend on polygons being sent.
+- **Count-aware objective.** Tweedie by default (zeros and outbreaks), Poisson
+  available.
+- **Selection without look-ahead.** Best of both ranks engines on a
   rolling-origin backtest of the training history only, with a minimum number
-  of observations and a hysteresis margin to avoid flip-flopping. With too
-  little history it keeps the configured champion and says so.
+  of observations and a hysteresis margin. With too little history it keeps the
+  configured champion and says so.
 - **Traceable fallback.** If the selected engine cannot load or predict, the
   service falls back to the other engine, then to a seasonal naive model, and
-  records the fallback. If nothing can predict, the job fails; it never invents
-  values.
-- **Honest uncertainty.** `sample_0..sample_N` are drawn from out-of-sample
-  residuals per horizon, collected during the selection backtest. When there
-  are not enough residuals, the service returns the point forecast as
-  `sample_0` only rather than duplicating it. The samples are not claimed to be
-  calibrated.
+  records it. If nothing can predict, the job fails; it never invents values.
+- **Uncertainty that scales with the level.** `sample_0..sample_N` come from
+  out-of-sample errors of the selection backtest, on the log scale, per horizon
+  and per forecast level: a zone forecast at 2,000 cases gets a wider range
+  than one at 5. With too few errors the point forecast is returned as
+  `sample_0` only. The samples are not claimed to be calibrated.
 - **Self-contained artifacts.** A training result embeds the native XGBoost
-  JSON / LightGBM text models with SHA-256 checksums, inside chapkit's own
+  JSON / LightGBM text models with SHA-256 checksums inside chapkit's own
   artifact store. The SQLite database on the data volume is the only state.
+
+## Evaluation
+
+`chap-disease-compare` replays the service's train and predict logic out of
+sample (4 rolling origins, 3-week horizon, inner backtest for the samples) on
+synthetic data with 100 zones and 196 weeks, and reports CHAP's metrics. Each
+row adds one change to the previous one; lower is better except coverage,
+whose targets are 0.80 and 0.50.
+
+| Synthetic cholera (seed 20261025) | MAE | CRPS | Interval score 80 % | Coverage 80 % |
+|---|---|---|---|---|
+| 0.3 model | 2.449 | 1.835 | 15.28 | 0.763 |
+| + log-scale uncertainty | 2.449 | 1.669 | 12.97 | 0.769 |
+| + dynamics and climate features | 2.463 | 1.661 | 12.72 | 0.768 |
+| + neighbours | 2.407 | 1.647 | 12.57 | 0.774 |
+| + Tweedie (0.4 default) | **2.311** | **1.641** | **12.19** | 0.772 |
+
+| Synthetic malaria (seed 20261025) | MAE | CRPS | Interval score 80 % | Coverage 80 % |
+|---|---|---|---|---|
+| 0.3 model | 4.751 | 3.472 | 23.57 | 0.776 |
+| 0.4 default | **4.701** | **3.408** | **22.24** | 0.796 |
+
+A second seed (4242) confirms the direction: cholera CRPS -10.5 %, MAE -9.5 %,
+interval score -19 %; malaria CRPS -1.9 %, MAE -1.2 %, interval score -9.6 %.
+The synthetic processes are built to exercise the software and are not
+evidence about real epidemics; method, sources and full results are in
+[docs/MODEL_IMPROVEMENTS.md](docs/MODEL_IMPROVEMENTS.md).
 
 ## Compatibility
 
@@ -89,9 +139,8 @@ CHAP Core 2.4.0 itself depends on `chapkit>=2.1.0,<3` and reads prediction
 artifacts with chapkit 2.1.0. The wire format written by chapkit 2.4.1 is
 accepted by 2.1.0 (same artifact keys, `schema` alias on DataFrames). The
 integration tests drive the service exactly as Core 2.4.0's
-`chapkit_rest_api_wrapper.py` does. Details, with links to the source lines, are
-in [docs/compatibility-matrix.md](docs/compatibility-matrix.md). No test has been
-run against a live CHAP instance yet.
+`chapkit_rest_api_wrapper.py` does, polygons included. Details, with links to
+the source lines, are in [docs/compatibility-matrix.md](docs/compatibility-matrix.md).
 
 ## Data contract
 
@@ -102,44 +151,49 @@ prediction, and rejects the request with a clear message otherwise.
 | ------------------ | -------- | ------------------------------------------------------------ |
 | `time_period`      | yes      | ISO week, e.g. `2025-W07`; weeks contiguous per location     |
 | `location`         | yes      | stable identifier; unique with `time_period`                 |
-| `disease_cases`    | yes      | non-negative; missing stays missing (never replaced by zero) |
+| `disease_cases`    | yes      | weekly cases of the dataset's disease; non-negative; missing stays missing (never replaced by zero) |
 | `rainfall`         | yes      | non-negative                                                 |
 | `mean_temperature` | yes      | finite                                                       |
 | `population`       | yes      | strictly positive                                            |
 | `parent`           | no       | used as a regional feature when present                      |
+| polygons (`geo`)   | no       | GeoJSON features whose `id` is the location; enables neighbour features |
 
 - **History length.** Lag-52 features need about 55 weeks per location. The
-  `auto` backtest needs `selection_min_train_weeks` (default 104) plus three
-  weeks per split; with less, `auto` keeps the champion and the forecast has a
-  single sample.
+  selection backtest needs `selection_min_train_weeks` (default 104) plus the
+  horizon and the number of splits; with less, Best of both keeps the champion
+  and the forecast has a single sample.
 - **Future rows.** The `future` frame must only contain locations seen in the
   history. Its climate values are accepted but not used: the model relies on
-  lagged climate only, so it does not depend on climate forecasts.
+  climate up to the origin week, so it does not depend on climate forecasts.
 - **Output.** One row per requested `(location, time_period)`, the future
   columns unchanged, plus `sample_0..sample_N`, all finite and non-negative.
 
 ## Model options
 
-Every field of `MalariaModelConfig`
-([service.py](src/chap_malaria_forecasting/chapkit_adapter/service.py)) is a
+Every field of `DiseaseModelConfig`
+([service.py](src/chap_disease_forecasting/chapkit_adapter/service.py)) is a
 user option of the CHAP model template, so you can create more configurations
 in the Modeling App.
 
-| Option                          | Default    | Meaning                                                             |
-| ------------------------------- | ---------- | ------------------------------------------------------------------- |
-| `engine`                        | `auto`     | `xgboost`, `lightgbm` or `auto`                                     |
-| `auto_mode`                     | `select`   | `select`, `ensemble` (inverse-MAE weights) or `champion_challenger` |
-| `champion`                      | `xgboost`  | engine kept when evidence is insufficient or the margin is not met  |
-| `switch_margin`                 | `0.02`     | relative MAE improvement needed to move away from the champion      |
-| `n_estimators`                  | `120`      | trees per horizon (10 to 1000)                                      |
-| `n_threads`                     | `1`        | threads per engine (1 to 12)                                        |
-| `random_seed`                   | `20261025` | seed for engines and sampling                                       |
-| `selection_backtest_splits`     | `3`        | rolling-origin splits used by `auto` and for residuals (2 to 7)     |
-| `selection_min_train_weeks`     | `104`      | minimum training weeks before the first backtest split              |
-| `selection_min_observations`    | `100`      | minimum scored forecasts before an engine can be ranked             |
-| `prediction_samples`            | `100`      | number of `sample_N` columns when residuals are available           |
-| `minimum_residuals_per_horizon` | `20`       | residuals per horizon needed before samples are produced            |
-| `seasonal_fallback`             | `true`     | allow the seasonal naive model as last-resort fallback              |
+| Option                          | Default    | Meaning                                                                  |
+| ------------------------------- | ---------- | ------------------------------------------------------------------------ |
+| `engine`                        | `auto`     | `xgboost`, `lightgbm` or `auto` (Best of both)                           |
+| `auto_mode`                     | `select`   | `select`, `ensemble` (inverse-MAE weights) or `champion_challenger`      |
+| `champion`                      | `xgboost`  | engine kept when evidence is insufficient or the margin is not met       |
+| `switch_margin`                 | `0.02`     | relative MAE improvement needed to move away from the champion           |
+| `objective`                     | `tweedie`  | `tweedie` or `poisson`                                                   |
+| `tweedie_variance_power`        | `1.5`      | 1.05 (close to Poisson) to 1.95 (close to gamma); higher suits spikier counts |
+| `spatial_neighbours`            | `5`        | nearest neighbours per zone for the neighbour features; `0` disables     |
+| `uncertainty_scale`             | `log1p`    | `log1p` (range scales with the level) or `additive` (0.3 behaviour)      |
+| `n_estimators`                  | `120`      | trees per horizon (10 to 1000)                                           |
+| `n_threads`                     | `1`        | threads per engine (1 to 12)                                             |
+| `random_seed`                   | `20261025` | seed for engines and sampling                                            |
+| `selection_backtest_splits`     | `3`        | rolling-origin splits for selection and residuals (2 to 7)               |
+| `selection_min_train_weeks`     | `104`      | minimum training weeks before the first backtest split                   |
+| `selection_min_observations`    | `100`      | minimum scored forecasts before an engine can be ranked                  |
+| `prediction_samples`            | `100`      | number of `sample_N` columns when residuals are available                |
+| `minimum_residuals_per_horizon` | `20`       | errors per horizon (and per level class) needed before samples are produced |
+| `seasonal_fallback`             | `true`     | allow the seasonal naive model as last-resort fallback                   |
 
 `prediction_periods` is set by CHAP for each run (1 to 12) and the service
 trains exactly that many horizons: a backtest usually asks for 3, while a
@@ -166,13 +220,13 @@ Then open `http://127.0.0.1:9090/docs`, or check `GET /health` and
 To try the published image on its own:
 
 ```bash
-docker run --rm -p 127.0.0.1:9090:8000 ghcr.io/ebed-meleck/chap-malaria-forecasting:sha-<commit>
+docker run --rm -p 127.0.0.1:9090:8000 ghcr.io/hisp-rdc/chap_disease_forecasting:sha-<commit>
 ```
 
 Benchmark the full CHAP train and predict path on synthetic data:
 
 ```bash
-uv run chap-malaria-benchmark --zones 514 --engine auto --through-service \
+uv run chap-disease-benchmark --zones 514 --engine auto --through-service \
   --n-estimators 120 --threads 4
 ```
 
@@ -184,13 +238,13 @@ whichever registered last.
 
 |                   | A. `chap-admin` + marketplace entry                  | B. Hand-written Compose overlay                       |
 | ----------------- | ---------------------------------------------------- | ----------------------------------------------------- |
-| Compose service   | written for you in `compose.marketplace.yml`         | `compose.chap-malaria-forecasting.yml` from this repo |
+| Compose service   | written for you in `compose.marketplace.yml`         | `compose.chap-disease-forecasting.yml` from this repo |
 | Configured models | the three are created automatically                  | you create them with three API calls                  |
 | Image check       | refuses an image whose commit does not match the pin | none                                                  |
 | Failed update     | rolled back automatically                            | manual                                                |
 | Resource limits   | add them to the generated service                    | included                                              |
 
-Both need an image published by CI (`ghcr.io/ebed-meleck/chap-malaria-forecasting:sha-<7 chars>`).
+Both need an image published by CI (`ghcr.io/hisp-rdc/chap_disease_forecasting:sha-<7 chars>`).
 If the package is private, run `docker login ghcr.io` on the CHAP host first,
 with a token limited to `read:packages`.
 
@@ -208,9 +262,9 @@ On the CHAP host, in the deployment directory:
 uv tool install chap-core==2.4.0 --python 3.13
 
 # 2. Serve the marketplace directory of this repository on localhost
-git clone https://github.com/Ebed-meleck/chap-malaria-forecasting.git ~/chap-malaria-forecasting
+git clone https://github.com/HISP-RDC/chap_disease_forecasting.git ~/chap-disease-forecasting
 python3 -m http.server 8765 --bind 127.0.0.1 \
-  --directory ~/chap-malaria-forecasting/marketplace &
+  --directory ~/chap-disease-forecasting/marketplace &
 MARKETPLACE_PID=$!
 export CHAP_MARKETPLACE_URL=http://127.0.0.1:8765
 
@@ -223,16 +277,16 @@ export CHAP_MARKETPLACE_URL=http://127.0.0.1:8765
 # 4. Install. --compose-file lists the base files you deploy CHAP with, in
 #    order (default: compose.yml). --accept-risk is required for any registry
 #    other than the official CHAP marketplace.
-chap-admin install chap_malaria_forecasting --compose-file compose.ghcr.yml --accept-risk
+chap-admin install chap_disease_forecasting --compose-file compose.ghcr.yml --accept-risk
 
 kill "${MARKETPLACE_PID}"
 ```
 
 If the repository is public you can skip the local server and use
-`CHAP_MARKETPLACE_URL=https://raw.githubusercontent.com/Ebed-meleck/chap-malaria-forecasting/main/marketplace`.
+`CHAP_MARKETPLACE_URL=https://raw.githubusercontent.com/HISP-RDC/chap_disease_forecasting/main/marketplace`.
 
 `chap-admin` pulls the pinned image, starts the service
-`marketplace-chap-malaria-forecasting` with a data volume, waits until it
+`marketplace-chap-disease-forecasting` with a data volume, waits until it
 registers with the expected service id and commit, creates the three configured
 models, and only then writes `compose.marketplace.yml`. From then on, include
 that file in every Compose command for this deployment, for example
@@ -240,7 +294,7 @@ that file in every Compose command for this deployment, for example
 
 To cap resources, add to the generated service in `compose.marketplace.yml`
 (kept by later `chap-admin update` runs), then recreate it with
-`docker compose ... up -d --no-deps marketplace-chap-malaria-forecasting`:
+`docker compose ... up -d --no-deps marketplace-chap-disease-forecasting`:
 
 ```yaml
 cpus: "4.0"
@@ -282,9 +336,27 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:8000/v2/servi
   -H 'Content-Type: application/json' -H "X-Service-Key: $KEY" -d '{}' # 422: the key is accepted
 ```
 
+### Migrating from `chap-malaria-forecasting`
+
+Version 0.4 is a new model in CHAP (service `chap-disease-forecasting`), not an
+update of the earlier `chap-malaria-forecasting` service. Install it next to the
+old one, compare them on the same backtest, then retire the old one:
+
+```bash
+chap-admin install chap_disease_forecasting --compose-file compose.ghcr.yml --accept-risk
+# after comparison:
+chap-admin uninstall chap_malaria_forecasting --compose-file compose.ghcr.yml
+```
+
+`uninstall` retires the old template and its configured models (their backtests
+and predictions stay in CHAP) and keeps the old data volume; never pass
+`--delete-data` until you no longer need it. Resource limits added to the old
+service in `compose.marketplace.yml` must be added again to
+`marketplace-chap-disease-forecasting`.
+
 ### B. With the Compose overlay
 
-[compose.chap-malaria-forecasting.yml](compose.chap-malaria-forecasting.yml)
+[compose.chap-disease-forecasting.yml](compose.chap-disease-forecasting.yml)
 follows chapkit's "Deploying to chap-core" guide and adds hardening and limits:
 non-root user, read-only root filesystem, no capabilities, CPU/memory/PID
 limits, rotated logs, no published port, and the project's default network
@@ -292,13 +364,13 @@ only (CHAP 2.4.0 keeps Postgres and Valkey on a separate `backend` network).
 
 ```bash
 # In the CHAP deployment directory
-cp ~/chap-malaria-forecasting/compose.chap-malaria-forecasting.yml .
-cat ~/chap-malaria-forecasting/deploy/runtime.env.example >> .env
-${EDITOR:-vi} .env                      # set MALARIA_FORECASTING_IMAGE
+cp ~/chap-disease-forecasting/compose.chap-disease-forecasting.yml .
+cat ~/chap-disease-forecasting/deploy/runtime.env.example >> .env
+${EDITOR:-vi} .env                      # set DISEASE_FORECASTING_IMAGE
 
-FILES="-f compose.ghcr.yml -f compose.chap-malaria-forecasting.yml"
+FILES="-f compose.ghcr.yml -f compose.chap-disease-forecasting.yml"
 docker compose $FILES config --quiet
-docker compose $FILES up -d --no-deps chap-malaria-forecasting
+docker compose $FILES up -d --no-deps chap-disease-forecasting
 ```
 
 Registration creates the model template but no configured model. Create the
@@ -308,7 +380,7 @@ three, using the template id CHAP assigned (never hard-code it):
 CHAP=http://localhost:8000
 AUTH=()                                  # AUTH=(-H "Authorization: Bearer $CHAP_API_TOKEN")
 TEMPLATE_ID=$(curl -fsS "${AUTH[@]}" "$CHAP/v1/crud/model-templates" \
-  | jq '[.[] | select(.name == "chap-malaria-forecasting")] | max_by(.id) | .id')
+  | jq '[.[] | select(.name == "chap-disease-forecasting")] | max_by(.id) | .id')
 
 for ENGINE in xgboost lightgbm auto; do
   curl -fsS "${AUTH[@]}" -X POST "$CHAP/v1/crud/configured-models" \
@@ -318,7 +390,7 @@ done
 ```
 
 An identical configuration is not stored twice, so the loop can be re-run. To
-update, change `MALARIA_FORECASTING_IMAGE` and run the same `up` command; to
+update, change `DISEASE_FORECASTING_IMAGE` and run the same `up` command; to
 roll back, put the previous image back. Never use `docker compose down -v`.
 
 ### Verify
@@ -326,8 +398,8 @@ roll back, put the previous image back. Never use `docker compose down -v`.
 ```bash
 curl -fsS "$CHAP/v2/services" | jq '.services[] | {id, url}'
 curl -fsS "$CHAP/v1/crud/model-templates" \
-  | jq '.[] | select(.name == "chap-malaria-forecasting") | {id, version, healthStatus}'
-curl -fsS "$CHAP/v1/crud/configured-models" | jq '.[] | .name' | grep chap-malaria-forecasting
+  | jq '.[] | select(.name == "chap-disease-forecasting") | {id, version, healthStatus}'
+curl -fsS "$CHAP/v1/crud/configured-models" | jq '.[] | .name' | grep chap-disease-forecasting
 ```
 
 Expected: the service listed, the template with `healthStatus` `live`, and the
@@ -348,21 +420,25 @@ The service must keep pinging CHAP every few seconds; if it disappears from
   service's descriptor format: a release that changes it asks CHAP to retrain.
 - **Resources.** CHAPKit runs one job at a time per service. Memory and time
   grow with zones x weeks x trees; `auto` trains each engine 3 + 3 x splits
-  times. Measured on a macOS arm64 laptop with synthetic data, 514 zones x 196
-  weeks, 120 trees, 4 threads, through the service callbacks:
+  times. Measured for 0.4 on a macOS arm64 laptop with synthetic data, 514
+  zones x 196 weeks, 120 trees, 4 threads, Tweedie, neighbour features on,
+  through the service callbacks:
 
   | Configuration | Train | Predict | Peak RSS | Stored artifact |
   | ------------- | ----- | ------- | -------- | --------------- |
-  | `xgboost`     | 40 s  | 3.9 s   | 525 MiB  | 1.5 MiB         |
-  | `lightgbm`    | 43 s  | 4.0 s   | 477 MiB  | 1.3 MiB         |
-  | `auto`        | 82 s  | 4.1 s   | 519 MiB  | 2.7 MiB         |
+  | `xgboost`     | 46 s  | 3.9 s   | 578 MiB  | 1.5 MiB         |
+  | `lightgbm`    | 51 s  | 4.0 s   | 447 MiB  | 1.4 MiB         |
+  | `auto`        | 85 s  | 4.1 s   | 543 MiB  | 2.8 MiB         |
+  | `auto`, 12 wk | 191 s | 5.1 s   | 556 MiB  | 10.9 MiB        |
+
+  The 0.4 features cost 3 to 15 % more training time than 0.3.
 
   A CHAP backtest repeats train and predict once per split. Re-measure on your
-  server with `chap-malaria-benchmark --through-service` and set limits from
+  server with `chap-disease-benchmark --through-service` and set limits from
   the result.
 
-- **Logs.** Structured events include `malaria_models_trained` (engines,
-  selection, uncertainty) and `malaria_predictions_created` (selected model,
+- **Logs.** Structured events include `disease_models_trained` (engines,
+  selection, uncertainty) and `disease_predictions_created` (selected model,
   fallback and reason). `/metrics` exposes Prometheus metrics on the internal
   network.
 - **Security.** The service API has no authentication of its own: never publish
@@ -378,14 +454,14 @@ zones, backup and rollback commands) is in
 ## Develop and release
 
 ```text
-src/chap_malaria_forecasting/
+src/chap_disease_forecasting/
   data/              validation, ISO weeks
-  features/          causal per-zone features
+  features/          causal per-zone features, spatial.py (neighbour graph)
   models/            xgboost/, lightgbm/, naive.py, ensemble/ (selection, fallback)
   forecasting/       direct multi-horizon forecaster, residual sampler
-  evaluation/        rolling-origin backtest, metrics, benchmark CLI
+  evaluation/        rolling-origin backtest, metrics, benchmark and comparison CLIs
   artifacts/         checksummed native model bundles
-  synthetic/         reproducible synthetic data for tests
+  synthetic/         reproducible malaria-like and cholera-like synthetic data
   chapkit_adapter/   the only module that imports chapkit
 main.py              ASGI entry point (uvicorn main:app)
 marketplace/         marketplace registry and entry read by chap-admin
@@ -417,27 +493,31 @@ Release flow:
    ```
 
    A fork published under another GitHub owner must update `source` in
-   `marketplace/models/chap_malaria_forecasting.yaml` (the image path must be
+   `marketplace/models/chap_disease_forecasting.yaml` (the image path must be
    lowercase) and `REPOSITORY_URL` in `chapkit_adapter/service.py`; a test
    keeps the two consistent.
 
 Once the model has been validated on real data, the same entry can be proposed
 to the official [CHAP model marketplace](https://github.com/dhis2-chap/model-marketplace),
-after which `chap-admin install chap_malaria_forecasting` works without
+after which `chap-admin install chap_disease_forecasting` works without
 `--accept-risk` or a custom registry.
 
 ## Limitations
 
-- Validated on synthetic data only; forecast skill on real data is unknown.
-- Samples come from empirical residuals and are not calibrated; check coverage
+- Forecast skill is measured on synthetic data only (see
+  [Evaluation](#evaluation)); it is unknown on real malaria or cholera data.
+- Samples come from empirical errors and are not calibrated; check coverage
   and CRPS in CHAP's backtest before relying on intervals.
+- Neighbours are the nearest zones by centroid distance; links along rivers or
+  roads between distant zones are not modelled.
 - Weeks must be contiguous per location in the history sent by CHAP.
 - Locations not present in the training history cannot be forecast.
-- Not yet run against a live CHAP 2.4.0 instance or the Modeling App; the
-  container image is built and smoke-tested in CI only.
+- The earlier 0.3 model ran on a live CHAP 2.4.0 with the Modeling App,
+  backtesting 519 health zones; 0.4 has so far run in CI and locally only.
 
-See [docs/IMPLEMENTATION_REPORT.md](docs/IMPLEMENTATION_REPORT.md) for the full
-verification record and [WORKLOG.md](WORKLOG.md) for the commands actually run.
+See [docs/MODEL_IMPROVEMENTS.md](docs/MODEL_IMPROVEMENTS.md) for the research,
+evaluation and roadmap, and [docs/IMPLEMENTATION_REPORT.md](docs/IMPLEMENTATION_REPORT.md)
+for the verification record.
 
 ## License
 

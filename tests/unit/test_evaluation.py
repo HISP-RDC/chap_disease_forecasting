@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from chap_malaria_forecasting.evaluation import (
+from chap_disease_forecasting.evaluation import (
     BacktestConfig,
     RollingOriginBacktester,
     alert_metrics,
@@ -11,8 +11,8 @@ from chap_malaria_forecasting.evaluation import (
     interval_score,
     point_metrics,
 )
-from chap_malaria_forecasting.models import PersistenceForecaster
-from chap_malaria_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
+from chap_disease_forecasting.models import PersistenceForecaster
+from chap_disease_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
 
 
 def test_point_and_probabilistic_metrics() -> None:

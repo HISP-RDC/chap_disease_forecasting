@@ -14,13 +14,17 @@ from dataclasses import replace
 
 import pandas as pd
 
-from chap_malaria_forecasting.data import add_iso_weeks
-from chap_malaria_forecasting.features import WeeklyFeatureBuilder
-from chap_malaria_forecasting.forecasting import DirectForecaster
-from chap_malaria_forecasting.models.base import NativeRegressor
-from chap_malaria_forecasting.models.lightgbm import LightGBMConfig, LightGBMRegressor
-from chap_malaria_forecasting.models.xgboost import XGBoostConfig, XGBoostRegressor
-from chap_malaria_forecasting.synthetic import generate_synthetic_history, preset_config
+from chap_disease_forecasting.data import add_iso_weeks
+from chap_disease_forecasting.features import WeeklyFeatureBuilder
+from chap_disease_forecasting.forecasting import DirectForecaster
+from chap_disease_forecasting.models.base import NativeRegressor
+from chap_disease_forecasting.models.lightgbm import LightGBMConfig, LightGBMRegressor
+from chap_disease_forecasting.models.xgboost import XGBoostConfig, XGBoostRegressor
+from chap_disease_forecasting.synthetic import (
+    generate_synthetic_history,
+    preset_config,
+    synthetic_geojson,
+)
 
 
 def _max_rss_mib() -> float:
@@ -47,19 +51,24 @@ def _future_frame(history: pd.DataFrame, horizons: int = 3) -> pd.DataFrame:
 
 
 def _run_through_service(
-    history: pd.DataFrame, engine: str, n_estimators: int, n_threads: int, periods: int
+    history: pd.DataFrame,
+    engine: str,
+    n_estimators: int,
+    n_threads: int,
+    periods: int,
+    geo: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Time the CHAPKit callbacks exactly as a CHAP train then predict job runs them."""
 
     from chapkit.data import DataFrame
 
-    from chap_malaria_forecasting.chapkit_adapter.service import (
-        MalariaModelConfig,
+    from chap_disease_forecasting.chapkit_adapter.service import (
+        DiseaseModelConfig,
         on_predict,
         on_train,
     )
 
-    config = MalariaModelConfig.model_validate(
+    config = DiseaseModelConfig.model_validate(
         {
             "engine": engine,
             "n_estimators": n_estimators,
@@ -68,7 +77,7 @@ def _run_through_service(
         }
     )
     started = time.perf_counter()
-    descriptor = asyncio.run(on_train(config, DataFrame.from_pandas(history)))
+    descriptor = asyncio.run(on_train(config, DataFrame.from_pandas(history), geo))  # type: ignore[arg-type]
     train_seconds = time.perf_counter() - started
     started = time.perf_counter()
     output = asyncio.run(
@@ -84,6 +93,7 @@ def _run_through_service(
         "service_predict_seconds": time.perf_counter() - started,
         "predictions": len(output),
         "samples": sum(str(column).startswith("sample_") for column in output.columns),
+        "locations_with_neighbours": descriptor["spatial"]["locations_with_neighbours"],
         "selected_models": descriptor["selection"]["selected_models"],
         "training_errors": descriptor["training_errors"],
         "descriptor_pickle_mib": len(pickle.dumps(descriptor)) / (1024.0 * 1024.0),
@@ -115,7 +125,9 @@ def run_benchmark(
     if through_service:
         if engine == "features":
             raise ValueError("--through-service needs xgboost, lightgbm or auto")
-        service = _run_through_service(history, engine, n_estimators, n_threads, periods)
+        service = _run_through_service(
+            history, engine, n_estimators, n_threads, periods, synthetic_geojson(config)
+        )
     elif engine == "auto":
         raise ValueError("engine auto is only available with --through-service")
     elif engine != "features":

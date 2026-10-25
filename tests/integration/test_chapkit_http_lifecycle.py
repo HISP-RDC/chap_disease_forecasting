@@ -18,10 +18,14 @@ from chapkit.artifact.schemas import MLPredictionArtifactData
 from chapkit.data import DataFrame
 from fastapi.testclient import TestClient
 
-from chap_malaria_forecasting.chapkit_adapter.service import create_app
-from chap_malaria_forecasting.data import add_iso_weeks
-from chap_malaria_forecasting.data.weeks import iso_week_label
-from chap_malaria_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
+from chap_disease_forecasting.chapkit_adapter.service import create_app
+from chap_disease_forecasting.data import add_iso_weeks
+from chap_disease_forecasting.data.weeks import iso_week_label
+from chap_disease_forecasting.synthetic import (
+    SyntheticConfig,
+    generate_synthetic_history,
+    synthetic_geojson,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -35,16 +39,15 @@ def _prepare_dataframe(frame: pd.DataFrame) -> dict[str, Any]:
     return {"columns": frame.columns.tolist(), "data": frame.values.tolist()}
 
 
+HISTORY_CONFIG = SyntheticConfig(
+    n_locations=6, n_weeks=60, missing_rate=0.02, short_history_fraction=0.0, seed=2024
+)
+# CHAP sends the dataset polygons with both $train and $predict.
+GEO = synthetic_geojson(HISTORY_CONFIG)
+
+
 def _history() -> pd.DataFrame:
-    return generate_synthetic_history(
-        SyntheticConfig(
-            n_locations=6,
-            n_weeks=60,
-            missing_rate=0.02,
-            short_history_fraction=0.0,
-            seed=2024,
-        )
-    )
+    return generate_synthetic_history(HISTORY_CONFIG)
 
 
 def _future(history: pd.DataFrame, periods: int) -> pd.DataFrame:
@@ -84,6 +87,7 @@ def _predict(
             "historic": _prepare_dataframe(history),
             "future": _prepare_dataframe(_future(history, periods)),
             "run_info": {"prediction_periods": periods},
+            "geo": GEO,
         },
     )
     assert response.status_code == 202, response.text
@@ -127,6 +131,7 @@ def test_core_style_train_predict_and_restart(tmp_path, monkeypatch, engine, per
                 "config_id": created.json()["id"],
                 "data": _prepare_dataframe(history),
                 "run_info": {"prediction_periods": periods},
+                "geo": GEO,
             },
         )
         assert train.status_code == 202, train.text

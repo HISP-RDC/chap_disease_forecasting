@@ -3,4 +3,4 @@
 # README.md "Deploy with chap-admin".
 schema_version: 2
 models:
-  - models/chap_malaria_forecasting.yaml
+  - models/chap_disease_forecasting.yaml

@@ -4,16 +4,16 @@ import copy
 
 import pytest
 
-from chap_malaria_forecasting.artifacts import (
+from chap_disease_forecasting.artifacts import (
     ArtifactIntegrityError,
     ArtifactStore,
     pack_forecaster,
     unpack_forecaster,
 )
-from chap_malaria_forecasting.forecasting import DirectForecaster
-from chap_malaria_forecasting.models.lightgbm import LightGBMConfig, LightGBMRegressor
-from chap_malaria_forecasting.models.xgboost import XGBoostConfig, XGBoostRegressor
-from chap_malaria_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
+from chap_disease_forecasting.forecasting import DirectForecaster
+from chap_disease_forecasting.models.lightgbm import LightGBMConfig, LightGBMRegressor
+from chap_disease_forecasting.models.xgboost import XGBoostConfig, XGBoostRegressor
+from chap_disease_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
 
 
 @pytest.fixture(scope="module")

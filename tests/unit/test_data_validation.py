@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from chap_malaria_forecasting.data import (
+from chap_disease_forecasting.data import (
     DataValidationError,
     ValidationConfig,
     add_iso_weeks,

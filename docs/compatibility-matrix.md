@@ -81,7 +81,7 @@ Le `run_info.prediction_periods` est le nom canonique du nombre de périodes; `p
 
 La sortie doit contenir les colonnes d'index de la grille future et des tirages contigus `sample_0`, `sample_1`, ..., sans trou. Un modèle déterministe peut techniquement ne produire que `sample_0` ([contrat runner](https://github.com/dhis2-chap/chapkit/blob/v2.1.0/docs/guides/shell-runner-contract.md#L104-L114)). Core dénombre les colonnes commençant par `sample_`, relit strictement `sample_0..sample_n` et rejette les valeurs non finies ([`Samples.from_pandas`](https://github.com/dhis2-chap/chap-core/blob/v2.4.0/chap_core/datatypes.py#L321-L354)).
 
-Exigences du service malaria, plus strictes que le minimum technique :
+Exigences de ce service, plus strictes que le minimum technique :
 
 - exactement une ligne par paire `(location, time_period)` demandée;
 - toutes les valeurs finies et positives ou nulles après la politique explicite de clipping;
@@ -109,7 +109,7 @@ Les identifiants ne doivent pas être confondus :
 
 | Identité | Type / origine | Stabilité attendue |
 |---|---|---|
-| `MLServiceInfo.id` | slug texte du service | stable entre déploiements; par exemple `malaria-forecasting` |
+| `MLServiceInfo.id` | slug texte du service | stable entre déploiements; ici `chap-disease-forecasting` |
 | `ModelTemplate.id` | entier attribué par la base Core | dynamique; toujours le lire par API |
 | nom du `ConfiguredModel` | `<template>:<stub>` calculé par Core | stable si le template et le stub restent stables |
 | `ConfiguredModel.id` | entier attribué par Core | dynamique |
@@ -221,7 +221,7 @@ Sources : [`cli_endpoints/marketplace.py`](https://github.com/dhis2-chap/chap-co
 | Règle `chap-admin` | Statut | Ce service |
 |---|---:|---|
 | Registre `schema_version: 2`, URL surchargeable par `CHAP_MARKETPLACE_URL` | ✅ | `marketplace/registry.yaml` |
-| `id` `[a-z0-9][a-z0-9_]*`, `service_id == id.replace("_", "-")` | ✅ | `chap_malaria_forecasting` / `chap-malaria-forecasting` = `MLServiceInfo.id` |
+| `id` `[a-z0-9][a-z0-9_]*`, `service_id == id.replace("_", "-")` | ✅ | `chap_disease_forecasting` / `chap-disease-forecasting` = `MLServiceInfo.id` |
 | Seul `channels.stable` avec `status: verified` est installé | ✅ | épinglé par `deploy/pin_release.py` après CI + recette |
 | `image_tag` = `sha-<préfixe ≥ 7 du commit>` | ✅ | CI publie `sha-<7>` et `sha-<40>` |
 | Le service enregistré doit annoncer `git_revision == commit` | ✅ | `GIT_REVISION` (build arg CI) lu par ChapKit |

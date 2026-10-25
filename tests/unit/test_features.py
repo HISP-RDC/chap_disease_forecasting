@@ -3,8 +3,8 @@ from __future__ import annotations
 import pandas as pd
 from pandas.testing import assert_series_equal
 
-from chap_malaria_forecasting.features import WeeklyFeatureBuilder
-from chap_malaria_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
+from chap_disease_forecasting.features import WeeklyFeatureBuilder
+from chap_disease_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
 
 
 def _history() -> pd.DataFrame:

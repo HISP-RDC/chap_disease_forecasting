@@ -16,10 +16,10 @@ from typing import Any
 import pytest
 import yaml
 
-from chap_malaria_forecasting.chapkit_adapter.service import (
+from chap_disease_forecasting.chapkit_adapter.service import (
     MODEL_VERSION,
     SERVICE_ID,
-    MalariaModelConfig,
+    DiseaseModelConfig,
     create_app,
 )
 
@@ -30,7 +30,7 @@ COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _entry(path: Path | None = None) -> dict[str, Any]:
-    path = path or MARKETPLACE / "models" / "chap_malaria_forecasting.yaml"
+    path = path or MARKETPLACE / "models" / "chap_disease_forecasting.yaml"
     return dict(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
@@ -56,7 +56,7 @@ def _stable_pin(entry: dict[str, Any]) -> str:
 def test_registry_lists_the_entry() -> None:
     registry = yaml.safe_load((MARKETPLACE / "registry.yaml").read_text(encoding="utf-8"))
     assert registry["schema_version"] == 2
-    assert registry["models"] == ["models/chap_malaria_forecasting.yaml"]
+    assert registry["models"] == ["models/chap_disease_forecasting.yaml"]
 
 
 def test_identity_matches_the_running_service(tmp_path, monkeypatch) -> None:
@@ -89,7 +89,7 @@ def test_identity_matches_the_running_service(tmp_path, monkeypatch) -> None:
 
 
 def test_each_configuration_is_stored_unchanged_by_the_service() -> None:
-    properties = MalariaModelConfig.model_json_schema()["properties"]
+    properties = DiseaseModelConfig.model_json_schema()["properties"]
     configurations = _entry()["configurations"]
     engines = {"xgboost": "xgboost", "lightgbm": "lightgbm", "best_of_both": "auto"}
     assert set(configurations) == set(engines)
@@ -105,7 +105,7 @@ def test_each_configuration_is_stored_unchanged_by_the_service() -> None:
         # Core validates options against the template schema, then refuses a
         # service that stores a different value than the one sent.
         assert set(options) <= set(properties), name
-        stored = MalariaModelConfig(**options).model_dump(mode="json")
+        stored = DiseaseModelConfig(**options).model_dump(mode="json")
         assert {key: stored[key] for key in options} == options, name
         assert options["engine"] == engines[name]
 
@@ -119,14 +119,16 @@ def test_public_names_shown_in_the_modeling_app() -> None:
         for stub in entry["configurations"]
     )
     assert shown == [
-        "Malaria Weekly Forecast (Gradient Boosting) [Best of both]",
-        "Malaria Weekly Forecast (Gradient Boosting) [Lightgbm]",
-        "Malaria Weekly Forecast (Gradient Boosting) [Xgboost]",
+        "Weekly Disease Forecast (Gradient Boosting) [Best of both]",
+        "Weekly Disease Forecast (Gradient Boosting) [Lightgbm]",
+        "Weekly Disease Forecast (Gradient Boosting) [Xgboost]",
     ]
 
 
 def test_committed_stable_pin_is_accepted_by_chap_admin() -> None:
     entry = _entry()
+    if not entry["versions"]:
+        pytest.skip("no release pinned yet; pin_release.py adds the first one")
     image = _stable_pin(entry)
     stable = next(v for v in entry["versions"] if v["version"] == entry["channels"]["stable"])
     assert image == f"{entry['source']['image']}:sha-{stable['commit'][:7]}"
@@ -136,7 +138,7 @@ def test_committed_stable_pin_is_accepted_by_chap_admin() -> None:
 
 def _unpinned_copy(tmp_path: Path, pin_release: Any) -> Path:
     target = tmp_path / "entry.yaml"
-    shutil.copy(MARKETPLACE / "models" / "chap_malaria_forecasting.yaml", target)
+    shutil.copy(MARKETPLACE / "models" / "chap_disease_forecasting.yaml", target)
     text = pin_release._replace_sections(
         target.read_text(encoding="utf-8"),
         {"channels": "channels: {}\n", "versions": "versions: []\n"},

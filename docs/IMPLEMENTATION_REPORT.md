@@ -1,4 +1,4 @@
-# Rapport d'implémentation — CHAP Malaria Forecasting RDC
+# Rapport d'implémentation — CHAP Disease Forecasting RDC (paludisme, choléra)
 
 État au 2026-10-25, version `0.2.0`. Chaque affirmation de succès ci-dessous correspond à
 une commande réellement exécutée (journal détaillé : `WORKLOG.md`). Ce qui n'a pas été
@@ -6,7 +6,7 @@ exécuté est signalé comme tel.
 
 ## 1. Architecture réalisée
 
-Un service CHAPKit Python autonome (`chap-malaria-forecasting`), une image, un template CHAP,
+Un service CHAPKit Python autonome (`chap-disease-forecasting`), une image, un template CHAP,
 trois configured models (`xgboost`, `lightgbm`, `auto`) via l'option utilisateur `engine`.
 
 - Bibliothèque métier sans dépendance CHAPKit : `data` (validation, semaines ISO),
@@ -17,7 +17,7 @@ trois configured models (`xgboost`, `lightgbm`, `auto`) via l'option utilisateur
 - Adaptateur unique `chapkit_adapter/service.py` : `on_train` / `on_predict` /
   `on_validate_*`, calcul lourd hors boucle asyncio, descripteur d'entraînement autonome.
 - Déploiement : entrée marketplace pour `chap-admin` (standard CHAP 2.4.0) ou overlay Compose
-  `compose.chap-malaria-forecasting.yml`.
+  `compose.chap-disease-forecasting.yml`.
 
 ## 2. Versions vérifiées
 
@@ -55,21 +55,21 @@ Détail et liens vers les lignes de code : `docs/compatibility-matrix.md`.
 
 Voir README, section « Develop and release ». Fichiers de déploiement : `Dockerfile`,
 `deploy/` (start, healthcheck, env, `pin_release.py`), `marketplace/`,
-`compose.chap-malaria-forecasting.yml`, `.github/workflows/ci.yml`.
+`compose.chap-disease-forecasting.yml`, `.github/workflows/ci.yml`.
 
 ## 5. Commandes exactes exécutées (session 2)
 
 ```bash
-export UV_CACHE_DIR=/private/tmp/chap-malaria-uv-cache OMP_NUM_THREADS=1
+export UV_CACHE_DIR=/private/tmp/chap-disease-uv-cache OMP_NUM_THREADS=1
 uv lock --check
 uv run --frozen ruff format --check . && uv run --frozen ruff check .
 uv run --frozen mypy src
 uv run --frozen pytest -q
 uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file req.txt
 uv run --frozen pip-audit --require-hashes --disable-pip -r req.txt
-docker compose -p chapcheck -f compose.ghcr.yml -f compose.chap-malaria-forecasting.yml config --quiet   # fichiers chap-core v2.4.0
-docker compose -p chapcheck -f compose.yml -f compose.chap-malaria-forecasting.yml config --quiet
-OMP_NUM_THREADS=4 uv run chap-malaria-benchmark --zones 514 --engine {xgboost,lightgbm,auto} \
+docker compose -p chapcheck -f compose.ghcr.yml -f compose.chap-disease-forecasting.yml config --quiet   # fichiers chap-core v2.4.0
+docker compose -p chapcheck -f compose.yml -f compose.chap-disease-forecasting.yml config --quiet
+OMP_NUM_THREADS=4 uv run chap-disease-benchmark --zones 514 --engine {xgboost,lightgbm,auto} \
   --through-service --n-estimators 120 --threads 4
 uv run python deploy/pin_release.py --entry <copie> --commit 0123456789abcdef0123456789abcdef01234567
 ```
@@ -178,3 +178,24 @@ format de descripteur change. Jamais `down -v` ni suppression de volume.
 
 La réussite des tests locaux ne vaut ni validation scientifique ni autorisation de
 déploiement national.
+
+## Addendum — version 0.4.0 (paludisme et choléra)
+
+- **Renommage** : `chap-malaria-forecasting` → `chap-disease-forecasting` (service, paquet
+  Python `chap_disease_forecasting`, image, overlay, entrée marketplace
+  `chap_disease_forecasting`, CLI `chap-disease-benchmark` / `chap-disease-compare`). Nom
+  affiché : « Weekly Disease Forecast (Gradient Boosting) ». Nouveau modèle dans CHAP;
+  migration décrite dans `PRODUCTION_DEPLOYMENT.md`, section 8.
+- **Améliorations** (détail, sources et résultats : `docs/MODEL_IMPROVEMENTS.md`) :
+  incertitude en échelle log par horizon et par niveau; variables climatiques lag 0,
+  fenêtre 16 semaines et anomalies; croissance et incidence courante; voisinage à partir des
+  polygones envoyés par CHAP (graphe stocké dans le modèle); objectif Tweedie par défaut.
+  Format de descripteur 3.
+- **Preuves** : banc `chap-disease-compare` hors échantillon (100 zones × 196 semaines,
+  4 origines, horizon 3), deux graines. Choléra synthétique : CRPS −10,6 % / −10,5 %, MAE
+  −5,6 % / −9,5 %, score d'intervalle −20 % / −19 %. Paludisme synthétique : CRPS −1,8 % /
+  −1,9 %, MAE −1,1 % / −1,2 %, score d'intervalle −5,6 % / −9,6 %. Données synthétiques
+  seulement; validation sur données réelles à faire dans CHAP.
+- **Tests** : 58 réussis, 1 ignoré (aucune release épinglée pour le nouveau modèle);
+  nouveaux tests de voisinage (causalité, signal de flambée voisine, persistance), de
+  couverture de l'incertitude, du banc de comparaison, et de bout en bout avec polygones.

@@ -2,33 +2,35 @@ schema_version: 2
 
 # `chap-admin` requires id == service_id with "-" replaced by "_", and
 # service_id == MLServiceInfo.id reported by the running container.
-id: chap_malaria_forecasting
-service_id: chap-malaria-forecasting
-display_name: Malaria Weekly Forecast (Gradient Boosting)
+id: chap_disease_forecasting
+service_id: chap-disease-forecasting
+display_name: Weekly Disease Forecast (Gradient Boosting)
 kind: model
 
 # The author's own chapkit AssessedStatus, copied from the service.
 assessed_status: orange
 
 summary: >-
-  Weekly malaria case forecasts up to 12 weeks ahead (as many weeks as CHAP
-  requests), using one directly trained gradient-boosting estimator per
-  horizon (XGBoost or LightGBM, Poisson objective) on strictly causal
-  per-location case and climate features. The best_of_both configuration
-  selects the engine from rolling-origin out-of-sample scores only. Samples
-  come from empirical out-of-sample residuals and are not claimed to be
-  calibrated.
+  Weekly case forecasts for climate-sensitive diseases such as malaria and
+  cholera, up to 12 weeks ahead (as many weeks as CHAP requests). One
+  gradient-boosting estimator per horizon (XGBoost or LightGBM, Tweedie
+  objective) on strictly causal features: case history and growth, current
+  and lagged rainfall and temperature with anomalies, and the incidence of
+  each location's nearest neighbours when CHAP sends the polygons.
+  best_of_both picks the engine from rolling-origin out-of-sample scores
+  only. Predictive samples come from out-of-sample errors on the log scale,
+  so ranges scale with the case level; they are not claimed to be calibrated.
 
 developed_for: >-
-  Weekly malaria surveillance at health-zone level in the Democratic Republic
-  of the Congo (514 zones). Tested end to end on synthetic data only; not yet
-  validated on real surveillance data.
+  Weekly malaria and cholera surveillance at health-zone level in the
+  Democratic Republic of the Congo (514 zones). Tested end to end on synthetic
+  data only; not yet validated on real surveillance data.
 
 source:
-  repository: https://github.com/Ebed-meleck/chap-malaria-forecasting
+  repository: https://github.com/HISP-RDC/chap_disease_forecasting
   # Registry paths must be lowercase: chap-admin and the marketplace validator
-  # reject uppercase, and GHCR publishes ghcr.io/ebed-meleck/... anyway.
-  image: ghcr.io/ebed-meleck/chap-malaria-forecasting
+  # reject uppercase, and GHCR publishes ghcr.io/hisp-rdc/... anyway.
+  image: ghcr.io/hisp-rdc/chap_disease_forecasting
   runtime_image: ghcr.io/dhis2-chap/chapkit-py
 
 # Copied from MLServiceInfo.model_metadata (a test keeps them equal).
@@ -53,32 +55,11 @@ covariates:
 # Filled by deploy/pin_release.py once CI has published the image and the
 # acceptance tests in docs/PRODUCTION_DEPLOYMENT.md have passed. Until then
 # `chap-admin install` refuses the entry ("no verified stable version").
-channels:
-  stable: 0.3.0
-  latest: 0.3.0
-versions:
-- version: 0.2.0
-  commit: 68f5d33350afea89e32d819b98bdd0044fba8ae9
-  image_tag: sha-68f5d33
-  chapkit: '>=2.4.1,<3'
-  status: verified
-  changelog: 'First release: XGBoost, LightGBM and auto configurations for weekly
-    malaria forecasting (horizons 1-3).'
-- version: 0.2.1
-  commit: e435d784ab7dbdae9315dad2cb938c65581d06c5
-  image_tag: sha-e435d78
-  chapkit: '>=2.4.1,<3'
-  status: verified
-  changelog: 'Clearer public names: Malaria Weekly Forecast (Gradient Boosting).'
-- version: 0.3.0
-  commit: aecbe9df6d3a13f6336e6719f1d1df429d3d577c
-  image_tag: sha-aecbe9d
-  chapkit: '>=2.4.1,<3'
-  status: verified
-  changelog: 'Clearer public names: Malaria Weekly Forecast (Gradient Boosting).'
+channels: {}
+versions: []
 
 # Each configuration becomes one configured model in CHAP, named
-# "chap-malaria-forecasting:<key>". The Modeling App lists it as
+# "chap-disease-forecasting:<key>". The Modeling App lists it as
 # "<display_name> [<Key>]", with underscores as spaces and only the first
 # letter capitalised (e.g. "[Best of both]"), so keys are chosen to read well.
 # prediction_periods is required by the marketplace schema; chap-admin drops

@@ -3,8 +3,8 @@
 Variables utilisées ci-dessous (voir `PRODUCTION_DEPLOYMENT.md`, section 2) :
 
 ```bash
-FILES=(-f compose.ghcr.yml -f compose.worker.yml -f compose.marketplace.yml)  # chemin B : compose.chap-malaria-forecasting.yml
-SERVICE=marketplace-chap-malaria-forecasting                                 # chemin B : chap-malaria-forecasting
+FILES=(-f compose.ghcr.yml -f compose.worker.yml -f compose.marketplace.yml)  # chemin B : compose.chap-disease-forecasting.yml
+SERVICE=marketplace-chap-disease-forecasting                                 # chemin B : chap-disease-forecasting
 PROJECT=$(docker compose "${FILES[@]}" config --format json | jq -r .name)
 MODEL_VOLUME="${PROJECT}_${SERVICE}-data"                                    # vérifier avec docker volume ls
 CID=$(docker compose "${FILES[@]}" ps -q "$SERVICE")
@@ -15,9 +15,9 @@ CID=$(docker compose "${FILES[@]}" ps -q "$SERVICE")
 `/metrics` (Prometheus) n'est joignable que sur le réseau Docker interne; ne pas publier de
 port pour le collecter. Événements applicatifs structurés à suivre dans les logs :
 
-- `malaria_models_trained` : moteurs entraînés, décision de sélection, incertitude disponible;
+- `disease_models_trained` : moteurs entraînés, décision de sélection, incertitude disponible;
 - `model_backtest_failed`, `model_training_failed` : preuve ou moteur indisponible;
-- `malaria_predictions_created` : modèle demandé/sélectionné, `used_fallback`, raison;
+- `disease_predictions_created` : modèle demandé/sélectionné, `used_fallback`, raison;
 - `primary_artifact_unavailable` : bascule vers un modèle de secours;
 - `keepalive.ping_failed`, `keepalive.re_registered` : santé de l'enregistrement CHAP.
 
@@ -47,8 +47,8 @@ CHAP, PostgreSQL ni Valkey.
 
 ```bash
 BACKUP_HELPER_IMAGE='docker.io/library/alpine:3.22@sha256:dc92f017beea8e7f43263073d717f7bc011228c95d5312e440deb4d035bb4eec'
-BACKUP_DIR=/srv/backups/chap-malaria
-BACKUP_NAME="chap-malaria-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
+BACKUP_DIR=/srv/backups/chap-disease
+BACKUP_NAME="chap-disease-$(date -u +%Y%m%dT%H%M%SZ).tar.gz"
 sudo install -d -m 0750 "$BACKUP_DIR"
 
 docker compose "${FILES[@]}" stop --timeout 90 "$SERVICE"
@@ -66,7 +66,7 @@ layer; le réévaluer explicitement, ne jamais le remplacer par un tag mutable.
 Restauration : faire d'abord une sauvegarde de l'état courant (ci-dessus), puis :
 
 ```bash
-RESTORE=chap-malaria-YYYYmmddTHHMMSSZ.tar.gz      # sauvegarde à restaurer
+RESTORE=chap-disease-YYYYmmddTHHMMSSZ.tar.gz      # sauvegarde à restaurer
 sha256sum --check "$BACKUP_DIR/$RESTORE.sha256"
 docker compose "${FILES[@]}" stop --timeout 90 "$SERVICE"
 docker run --rm --read-only --network none \
@@ -91,7 +91,7 @@ procédure existante; ce service n'a aucun accès réseau à PostgreSQL.
 4. Vérifier `/v2/services`, `healthStatus` du template et les configured models.
 5. Classer : enregistrement, contrat de données (message `DataValidationError`), moteur,
    artefact (checksum, format ancien → réentraîner), capacité.
-6. Reproduire sur données synthétiques avec la même image (`chap-malaria-benchmark`).
+6. Reproduire sur données synthétiques avec la même image (`chap-disease-benchmark`).
 7. Rollback si la régression vient de la nouvelle image.
 
 Un modèle indisponible n'est jamais remplacé silencieusement : le fallback apparaît dans les

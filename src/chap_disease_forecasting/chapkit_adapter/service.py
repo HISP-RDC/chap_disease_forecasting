@@ -18,7 +18,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
-import numpy as np
 import pandas as pd
 import structlog
 from chapkit import BaseConfig
@@ -35,20 +34,21 @@ from chapkit.ml import FunctionalModelRunner, ValidationDiagnostic
 from geojson_pydantic import FeatureCollection
 from pydantic import Field, HttpUrl
 
-from chap_malaria_forecasting.artifacts import pack_forecaster, unpack_forecaster
-from chap_malaria_forecasting.data import DataValidationError, normalize_week, validate_history
-from chap_malaria_forecasting.evaluation import (
+from chap_disease_forecasting.artifacts import pack_forecaster, unpack_forecaster
+from chap_disease_forecasting.data import DataValidationError, normalize_week, validate_history
+from chap_disease_forecasting.evaluation import (
     BacktestConfig,
     RollingOriginBacktester,
     point_metrics,
 )
-from chap_malaria_forecasting.forecasting import (
+from chap_disease_forecasting.features.spatial import neighbour_graph
+from chap_disease_forecasting.forecasting import (
     DirectForecastConfig,
     DirectForecaster,
     HorizonResidualSampler,
     InsufficientResidualEvidence,
 )
-from chap_malaria_forecasting.models.ensemble import (
+from chap_disease_forecasting.models.ensemble import (
     AutoSelectionPolicy,
     ChampionChallengerPolicy,
     EnsembleForecaster,
@@ -57,23 +57,24 @@ from chap_malaria_forecasting.models.ensemble import (
     InsufficientEvidenceError,
     SelectionDecision,
 )
-from chap_malaria_forecasting.models.lightgbm import LightGBMConfig, LightGBMRegressor
-from chap_malaria_forecasting.models.naive import SeasonalNaiveForecaster
-from chap_malaria_forecasting.models.xgboost import XGBoostConfig, XGBoostRegressor
+from chap_disease_forecasting.models.lightgbm import LightGBMConfig, LightGBMRegressor
+from chap_disease_forecasting.models.naive import SeasonalNaiveForecaster
+from chap_disease_forecasting.models.xgboost import XGBoostConfig, XGBoostRegressor
 
 log = structlog.get_logger()
 
-SERVICE_ID = "chap-malaria-forecasting"
-REPOSITORY_URL = HttpUrl("https://github.com/Ebed-meleck/chap-malaria-forecasting")
-MODEL_VERSION = "0.3.0"
-DESCRIPTOR_VERSION = 2
+SERVICE_ID = "chap-disease-forecasting"
+REPOSITORY_URL = HttpUrl("https://github.com/HISP-RDC/chap_disease_forecasting")
+MODEL_VERSION = "0.4.0"
+# 3: neighbour graph and log-scale residual pools in the training descriptor.
+DESCRIPTOR_VERSION = 3
 SUPPORTED_ENGINES = ("xgboost", "lightgbm")
 # CHAP Core 2.4.0 asks for 12 periods on weekly data when a prediction does not
 # set its own horizon (db_worker_functions._get_n_periods).
 MAX_PREDICTION_PERIODS = 12
 
 
-class MalariaModelConfig(BaseConfig):
+class DiseaseModelConfig(BaseConfig):
     """Options exposed as CHAP configured-model user options."""
 
     prediction_periods: int = Field(default=3, ge=1, le=MAX_PREDICTION_PERIODS)
@@ -90,14 +91,29 @@ class MalariaModelConfig(BaseConfig):
     prediction_samples: int = Field(default=100, ge=2, le=1_000)
     minimum_residuals_per_horizon: int = Field(default=20, ge=10)
     seasonal_fallback: bool = True
+    # Tweedie handles counts with many zeros and sudden outbreaks (cholera) and
+    # scored better than Poisson on both synthetic malaria and cholera
+    # (docs/MODEL_IMPROVEMENTS.md); Poisson remains available.
+    objective: Literal["poisson", "tweedie"] = "tweedie"
+    tweedie_variance_power: float = Field(default=1.5, ge=1.05, le=1.95)
+    # Nearest neighbours per location for the spatial features (0 disables);
+    # used only when CHAP sends the dataset polygons.
+    spatial_neighbours: int = Field(default=5, ge=0, le=20)
+    # log1p: uncertainty proportional to the forecast level; additive: one
+    # absolute error distribution per horizon for all locations.
+    uncertainty_scale: Literal["log1p", "additive"] = "log1p"
 
 
-def _engine_factory(config: MalariaModelConfig, engine: str) -> Callable[[], Any]:
+def _engine_factory(config: DiseaseModelConfig, engine: str) -> Callable[[], Any]:
     if engine == "xgboost":
         xgboost_config = XGBoostConfig(
             n_estimators=config.n_estimators,
             n_jobs=config.n_threads,
             random_state=config.random_seed,
+            objective="reg:tweedie" if config.objective == "tweedie" else "count:poisson",
+            tweedie_variance_power=(
+                config.tweedie_variance_power if config.objective == "tweedie" else None
+            ),
         )
         return lambda: XGBoostRegressor(xgboost_config)
     if engine == "lightgbm":
@@ -105,21 +121,26 @@ def _engine_factory(config: MalariaModelConfig, engine: str) -> Callable[[], Any
             n_estimators=config.n_estimators,
             n_jobs=config.n_threads,
             random_state=config.random_seed,
+            objective=config.objective,
+            tweedie_variance_power=(
+                config.tweedie_variance_power if config.objective == "tweedie" else None
+            ),
         )
         return lambda: LightGBMRegressor(lightgbm_config)
     raise ValueError(f"unsupported engine: {engine!r}")
 
 
-def _horizons(config: MalariaModelConfig) -> tuple[int, ...]:
+def _horizons(config: DiseaseModelConfig) -> tuple[int, ...]:
     """Train only the horizons CHAP asked for (run_info.prediction_periods)."""
 
     return tuple(range(1, config.prediction_periods + 1))
 
 
 def _backtest(
-    config: MalariaModelConfig,
+    config: DiseaseModelConfig,
     history: pd.DataFrame,
     engine: str,
+    neighbours: dict[str, list[str]] | None = None,
 ) -> pd.DataFrame:
     evaluator = RollingOriginBacktester(
         BacktestConfig(
@@ -130,7 +151,9 @@ def _backtest(
     )
     factory = _engine_factory(config, engine)
     forecast_config = DirectForecastConfig(horizons=_horizons(config))
-    return evaluator.run(history, lambda: DirectForecaster(factory, forecast_config))
+    return evaluator.run(
+        history, lambda: DirectForecaster(factory, forecast_config, neighbours=neighbours)
+    )
 
 
 def _historical_score(engine: str, result: pd.DataFrame) -> HistoricalScore:
@@ -164,7 +187,7 @@ def _decision_to_json(decision: Any) -> dict[str, Any]:
 
 
 def _choose_auto(
-    config: MalariaModelConfig,
+    config: DiseaseModelConfig,
     scores: list[HistoricalScore],
     origin: pd.Timestamp,
     trained: list[str],
@@ -236,7 +259,7 @@ def _combine_backtests(
 
 
 def _fit_sampler(
-    config: MalariaModelConfig,
+    config: DiseaseModelConfig,
     result: pd.DataFrame | None,
 ) -> dict[str, Any] | None:
     if result is None:
@@ -245,52 +268,33 @@ def _fit_sampler(
         n_samples=config.prediction_samples,
         min_residuals_per_horizon=config.minimum_residuals_per_horizon,
         seed=config.random_seed,
+        scale=config.uncertainty_scale,
     )
     try:
         sampler.fit(result)
     except (InsufficientResidualEvidence, ValueError) as exc:
         log.warning("uncertainty_unavailable", reason=str(exc))
         return None
-    assert sampler.evaluated_through_ is not None
-    return {
-        "method": "empirical_oos_residual",
-        "calibrated": False,
-        "n_samples": sampler.n_samples,
-        "seed": sampler.seed,
-        "evaluated_through": sampler.evaluated_through_.isoformat(),
-        "residuals": {
-            str(horizon): values.astype(float).tolist()
-            for horizon, values in sampler.residuals_.items()
-        },
-    }
+    return sampler.to_dict()
 
 
 def _restore_sampler(descriptor: dict[str, Any]) -> HorizonResidualSampler | None:
     uncertainty = descriptor.get("uncertainty")
     if uncertainty is None:
         return None
-    if not isinstance(uncertainty, dict) or uncertainty.get("method") != "empirical_oos_residual":
+    if not isinstance(uncertainty, dict):
         raise ValueError("unsupported uncertainty descriptor")
-    sampler = HorizonResidualSampler(
-        n_samples=int(uncertainty["n_samples"]),
-        min_residuals_per_horizon=1,
-        seed=int(uncertainty["seed"]),
-    )
-    sampler.residuals_ = {
-        int(horizon): np.asarray(values, dtype=float)
-        for horizon, values in uncertainty["residuals"].items()
-    }
-    if not sampler.residuals_ or any(
-        values.ndim != 1 or len(values) < 2 or not np.isfinite(values).all()
-        for values in sampler.residuals_.values()
-    ):
-        raise ValueError("invalid residual samples in training descriptor")
-    sampler.evaluated_through_ = pd.Timestamp(uncertainty["evaluated_through"])
-    return sampler
+    return HorizonResidualSampler.from_dict(uncertainty)
 
 
-def _train_sync(config: MalariaModelConfig, raw: pd.DataFrame) -> dict[str, Any]:
+def _train_sync(config: DiseaseModelConfig, raw: pd.DataFrame, geo: Any = None) -> dict[str, Any]:
     history = validate_history(raw)
+    locations = sorted(history["location"].astype(str).unique())
+    neighbours = (
+        neighbour_graph(geo, config.spatial_neighbours, locations)
+        if config.spatial_neighbours > 0
+        else {}
+    )
     requested = [config.engine] if config.engine in SUPPORTED_ENGINES else list(SUPPORTED_ENGINES)
     training_id = f"train-{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:12]}"
     models: dict[str, dict[str, Any]] = {}
@@ -299,13 +303,15 @@ def _train_sync(config: MalariaModelConfig, raw: pd.DataFrame) -> dict[str, Any]
 
     for engine in requested:
         try:
-            backtests[engine] = _backtest(config, history, engine)
+            backtests[engine] = _backtest(config, history, engine, neighbours)
         except Exception as exc:  # evidence failure is retained, never hidden
             errors[f"{engine}_backtest"] = f"{type(exc).__name__}: {exc}"
             log.warning("model_backtest_failed", engine=engine, error=str(exc))
         try:
             model = DirectForecaster(
-                _engine_factory(config, engine), DirectForecastConfig(horizons=_horizons(config))
+                _engine_factory(config, engine),
+                DirectForecastConfig(horizons=_horizons(config)),
+                neighbours=neighbours,
             ).fit(history)
             models[engine] = pack_forecaster(model)
         except Exception as exc:
@@ -350,32 +356,37 @@ def _train_sync(config: MalariaModelConfig, raw: pd.DataFrame) -> dict[str, Any]
         "rows": len(history),
         "config": config.model_dump(mode="json"),
         "horizons": list(_horizons(config)),
+        "spatial": {
+            "neighbours_per_location": config.spatial_neighbours,
+            "locations_with_neighbours": len(neighbours),
+        },
         "models": models,
         "selection": decision_json,
         "training_errors": errors,
         "uncertainty": _fit_sampler(config, selected_backtest),
     }
     log.info(
-        "malaria_models_trained",
+        "disease_models_trained",
         training_id=training_id,
         engines=list(models),
         selected_models=selected_models,
         rows=len(history),
         locations=descriptor["locations"],
+        locations_with_neighbours=len(neighbours),
+        objective=config.objective,
         uncertainty_available=descriptor["uncertainty"] is not None,
     )
     return descriptor
 
 
 async def on_train(
-    config: MalariaModelConfig,
+    config: DiseaseModelConfig,
     data: DataFrame,
     geo: FeatureCollection[Any] | None = None,
 ) -> dict[str, Any]:
     """Train requested engines and return a self-contained, checksummed descriptor."""
 
-    del geo
-    return await asyncio.to_thread(_train_sync, config, data.to_pandas())
+    return await asyncio.to_thread(_train_sync, config, data.to_pandas(), geo)
 
 
 def _validate_descriptor(model: Any) -> dict[str, Any]:
@@ -486,7 +497,7 @@ def _predict_sync(model: Any, historic: pd.DataFrame, future: pd.DataFrame) -> p
         predictions = sampler.add_samples(predictions)
     output = _align_to_future(future, predictions)
     log.info(
-        "malaria_predictions_created",
+        "disease_predictions_created",
         training_id=descriptor["training_id"],
         selected_model=str(predictions["selected_model"].iloc[0]),
         requested_model=str(predictions["requested_model"].iloc[0]),
@@ -507,7 +518,7 @@ def _predict_sync(model: Any, historic: pd.DataFrame, future: pd.DataFrame) -> p
 
 
 async def on_predict(
-    config: MalariaModelConfig,
+    config: DiseaseModelConfig,
     model: Any,
     historic: DataFrame,
     future: DataFrame,
@@ -525,7 +536,7 @@ def _diagnostic_error(code: str, message: str, field: str) -> ValidationDiagnost
 
 
 async def on_validate_train(
-    config: MalariaModelConfig,
+    config: DiseaseModelConfig,
     data: DataFrame,
     geo: FeatureCollection[Any] | None = None,
 ) -> list[ValidationDiagnostic]:
@@ -550,7 +561,7 @@ async def on_validate_train(
 
 
 async def on_validate_predict(
-    config: MalariaModelConfig,
+    config: DiseaseModelConfig,
     historic: DataFrame,
     future: DataFrame,
     geo: FeatureCollection[Any] | None = None,
@@ -607,14 +618,16 @@ def create_app() -> Any:
     info = MLServiceInfo(
         id=SERVICE_ID,
         # CHAP shows "<display_name> [<Configuration>]" for each configured model.
-        display_name="Malaria Weekly Forecast (Gradient Boosting)",
+        display_name="Weekly Disease Forecast (Gradient Boosting)",
         version=MODEL_VERSION,
         description=(
-            "Forecasts weekly malaria cases up to 12 weeks ahead for each location, from past "
-            "cases, rainfall, temperature and population; accuracy drops with distance, so "
-            "check backtests for the horizon you use. Choose XGBoost, LightGBM, or Best of "
-            "both, which keeps whichever engine was more accurate on past data. Uncertainty "
-            "ranges come from past forecast errors and are not calibrated."
+            "Forecasts weekly cases of a climate-sensitive disease, such as malaria or "
+            "cholera, up to 12 weeks ahead for each location. It learns from past cases, "
+            "rainfall, temperature, population and, when the dataset has polygons, the "
+            "neighbouring locations. Accuracy drops with distance, so check backtests for "
+            "the horizon you use. Choose XGBoost, LightGBM, or Best of both, which keeps "
+            "whichever engine was more accurate on past data. Uncertainty ranges come from "
+            "past forecast errors, scale with the case level and are not calibrated."
         ),
         model_metadata=ModelMetadata(
             author="HISP DRC engineering team",
@@ -637,10 +650,10 @@ def create_app() -> Any:
         target="disease_cases",
     )
     hierarchy = ArtifactHierarchy(
-        name="chap_malaria_forecasting",
+        name="chap_disease_forecasting",
         level_labels={0: "ml_training_workspace", 1: "ml_prediction"},
     )
-    runner: FunctionalModelRunner[MalariaModelConfig] = FunctionalModelRunner(
+    runner: FunctionalModelRunner[DiseaseModelConfig] = FunctionalModelRunner(
         on_train=on_train,
         on_predict=on_predict,
         on_validate_train=on_validate_train,
@@ -649,13 +662,17 @@ def create_app() -> Any:
     return (
         MLServiceBuilder(
             info=info,
-            config_schema=MalariaModelConfig,
+            config_schema=DiseaseModelConfig,
             hierarchy=hierarchy,
             runner=runner,
             database_url=database_url,
         )
         .with_monitoring()
-        .with_registration()
+        # CHAP Core 2.4.0 expires a registration 30 s after the last ping and answers
+        # with a single gunicorn worker, which can stall for more than 10 s during a
+        # large data import. Ping more often, wait longer for an answer, and register
+        # again 10 s (instead of 30 s) after CHAP reports the service as gone.
+        .with_registration(timeout=15.0, keepalive_interval=5.0, re_register_grace_period=10.0)
         .build()
     )
 

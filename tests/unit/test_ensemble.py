@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from chap_malaria_forecasting.models.ensemble import (
+from chap_disease_forecasting.models.ensemble import (
     AutoSelectionPolicy,
     ChampionChallengerPolicy,
     EnsembleForecaster,

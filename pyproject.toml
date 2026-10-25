@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "chap-malaria-forecasting"
-version = "0.3.0"
-description = "Causal weekly malaria forecasting service for CHAP using XGBoost, LightGBM and controlled ensembles"
+name = "chap-disease-forecasting"
+version = "0.4.0"
+description = "Weekly forecasting of climate-sensitive diseases (malaria, cholera) for CHAP, with XGBoost, LightGBM and controlled model selection"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
@@ -24,7 +24,8 @@ dependencies = [
 ]
 
 [project.scripts]
-chap-malaria-benchmark = "chap_malaria_forecasting.evaluation.benchmark:main"
+chap-disease-benchmark = "chap_disease_forecasting.evaluation.benchmark:main"
+chap-disease-compare = "chap_disease_forecasting.evaluation.comparison:main"
 
 [dependency-groups]
 dev = [
@@ -38,7 +39,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/chap_malaria_forecasting"]
+packages = ["src/chap_disease_forecasting"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"
@@ -62,5 +63,5 @@ ignore = ["S101"]
 python_version = "3.13"
 strict = true
 warn_unreachable = true
-packages = ["chap_malaria_forecasting"]
+packages = ["chap_disease_forecasting"]
 

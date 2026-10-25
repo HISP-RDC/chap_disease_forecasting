@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from chap_malaria_forecasting.forecasting import DirectForecaster
+from chap_disease_forecasting.forecasting import DirectForecaster
 
 _ARTIFACT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _BUNDLE_PATH = re.compile(r"^[A-Za-z0-9_]{1,64}(/[A-Za-z0-9_]{1,64}){0,3}\.(json|txt)$")
@@ -29,7 +29,7 @@ def pack_forecaster(model: DirectForecaster) -> dict[str, Any]:
     any engine object and without depending on a second storage location.
     """
 
-    with tempfile.TemporaryDirectory(prefix="chap-malaria-pack-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="chap-disease-pack-") as temporary:
         directory = Path(temporary)
         model.save(directory)
         files: dict[str, dict[str, str]] = {}
@@ -58,7 +58,7 @@ def unpack_forecaster(bundle: Any) -> DirectForecaster:
         or not bundle["files"]
     ):
         raise ArtifactIntegrityError("unsupported or empty model bundle")
-    with tempfile.TemporaryDirectory(prefix="chap-malaria-unpack-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="chap-disease-unpack-") as temporary:
         directory = Path(temporary)
         for relative, entry in bundle["files"].items():
             if not isinstance(relative, str) or not _BUNDLE_PATH.fullmatch(relative):

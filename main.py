@@ -1,6 +1,6 @@
 """ASGI entry point generated from the CHAPKit functional-service contract."""
 
-from chap_malaria_forecasting.chapkit_adapter import app as app
+from chap_disease_forecasting.chapkit_adapter import app as app
 
 if __name__ == "__main__":
     from chapkit.api import run_app

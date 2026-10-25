@@ -8,7 +8,7 @@ from typing import Protocol
 
 import pandas as pd
 
-from chap_malaria_forecasting.data import validate_history
+from chap_disease_forecasting.data import validate_history
 
 from .metrics import point_metrics
 

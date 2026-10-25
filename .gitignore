@@ -18,7 +18,7 @@ htmlcov/
 .hypothesis/
 
 # Builds, models, data, and local benchmarks. Anchored with a leading "/" so
-# they never match the src/chap_malaria_forecasting/{data,artifacts} packages.
+# they never match the src/chap_disease_forecasting/{data,artifacts} packages.
 /build/
 /dist/
 /artifacts/

@@ -1,6 +1,6 @@
 """Add a verified release pin to the marketplace entry read by `chap-admin`.
 
-Usage (after CI published ghcr.io/<owner>/chap-malaria-forecasting:sha-<commit[:7]>
+Usage (after CI published ghcr.io/<owner>/chap-disease-forecasting:sha-<commit[:7]>
 and the acceptance tests passed):
 
     uv run python deploy/pin_release.py --commit <40-char sha> [--version 0.2.0]
@@ -20,7 +20,7 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-ENTRY = ROOT / "marketplace" / "models" / "chap_malaria_forecasting.yaml"
+ENTRY = ROOT / "marketplace" / "models" / "chap_disease_forecasting.yaml"
 _TOP_LEVEL = re.compile(r"^([a-z_]+):")
 
 

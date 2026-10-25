@@ -12,11 +12,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from chap_malaria_forecasting.data import add_iso_weeks, validate_history
-from chap_malaria_forecasting.features import FeatureConfig, WeeklyFeatureBuilder
-from chap_malaria_forecasting.models.base import ModelNotFittedError, NativeRegressor
-from chap_malaria_forecasting.models.lightgbm import LightGBMRegressor
-from chap_malaria_forecasting.models.xgboost import XGBoostRegressor
+from chap_disease_forecasting.data import add_iso_weeks, validate_history
+from chap_disease_forecasting.features import FeatureConfig, WeeklyFeatureBuilder
+from chap_disease_forecasting.models.base import ModelNotFittedError, NativeRegressor
+from chap_disease_forecasting.models.lightgbm import LightGBMRegressor
+from chap_disease_forecasting.models.xgboost import XGBoostRegressor
 
 
 @dataclass(frozen=True)
@@ -39,10 +39,11 @@ class DirectForecaster:
         engine_factory: Callable[[], NativeRegressor],
         config: DirectForecastConfig | None = None,
         feature_config: FeatureConfig | None = None,
+        neighbours: dict[str, list[str]] | None = None,
     ):
         self.engine_factory = engine_factory
         self.config = config or DirectForecastConfig()
-        self.feature_builder = WeeklyFeatureBuilder(feature_config)
+        self.feature_builder = WeeklyFeatureBuilder(feature_config, neighbours)
         self.models_: dict[int, NativeRegressor] = {}
         self.trained_at_: str | None = None
         self.training_rows_: dict[int, int] = {}
@@ -121,6 +122,7 @@ class DirectForecaster:
             "feature_config": self.feature_builder.config_dict,
             "location_mapping": self.feature_builder.location_mapping_,
             "parent_mapping": self.feature_builder.parent_mapping_,
+            "neighbours": self.feature_builder.neighbours_,
             "feature_names": list(self.feature_builder.feature_names_ or ()),
             "time_origin": self.feature_builder.time_origin_.isoformat()
             if self.feature_builder.time_origin_ is not None
@@ -161,6 +163,10 @@ class DirectForecaster:
             engine_factory=engine_classes[engine_name],
             config=DirectForecastConfig(**config_data),
             feature_config=FeatureConfig(**feature_data),
+            neighbours={
+                str(key): [str(value) for value in values]
+                for key, values in metadata.get("neighbours", {}).items()
+            },
         )
         instance.feature_builder.location_mapping_ = {
             str(key): int(value) for key, value in metadata["location_mapping"].items()

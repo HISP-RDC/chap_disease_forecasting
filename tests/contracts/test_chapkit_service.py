@@ -7,15 +7,20 @@ import pandas as pd
 import pytest
 from chapkit.data import DataFrame
 from fastapi.testclient import TestClient
+from geojson_pydantic import FeatureCollection
 
-from chap_malaria_forecasting.chapkit_adapter.service import (
-    MalariaModelConfig,
+from chap_disease_forecasting.chapkit_adapter.service import (
+    DiseaseModelConfig,
     create_app,
     on_predict,
     on_train,
 )
-from chap_malaria_forecasting.data import add_iso_weeks
-from chap_malaria_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
+from chap_disease_forecasting.data import add_iso_weeks
+from chap_disease_forecasting.synthetic import (
+    SyntheticConfig,
+    generate_synthetic_history,
+    synthetic_geojson,
+)
 
 
 def _small_history(n_locations: int = 2) -> pd.DataFrame:
@@ -60,15 +65,15 @@ def test_service_contract_exposes_health_info_and_config_schema(tmp_path, monkey
 
     assert health.status_code == 200
     assert info.status_code == 200
-    assert info.json()["id"] == "chap-malaria-forecasting"
+    assert info.json()["id"] == "chap-disease-forecasting"
     assert info.json()["period_type"] == "weekly"
     assert schema.status_code == 200
     engine_schema = schema.json()["properties"]["engine"]
     assert engine_schema["enum"] == ["xgboost", "lightgbm", "auto"]
 
 
-def _small_config(engine: str) -> MalariaModelConfig:
-    return MalariaModelConfig(
+def _small_config(engine: str) -> DiseaseModelConfig:
+    return DiseaseModelConfig(
         engine=engine,
         n_estimators=10,
         n_threads=1,
@@ -168,6 +173,27 @@ async def test_training_does_not_block_the_event_loop():
 
 
 @pytest.mark.asyncio
+async def test_training_uses_chap_polygons_for_neighbour_features():
+    config_data = SyntheticConfig(
+        n_locations=6, n_weeks=36, missing_rate=0.0, short_history_fraction=0.0, seed=71
+    )
+    history = generate_synthetic_history(config_data)
+    geo = FeatureCollection.model_validate(synthetic_geojson(config_data))
+
+    descriptor = await on_train(_small_config("xgboost"), DataFrame.from_pandas(history), geo)
+    # CHAP sends polygons again at predict time, but the graph stored at training suffices.
+    prediction = await on_predict(
+        _small_config("xgboost"),
+        descriptor,
+        DataFrame.from_pandas(history),
+        DataFrame.from_pandas(_future_from(history)),
+    )
+
+    assert descriptor["spatial"]["locations_with_neighbours"] == 6
+    assert len(prediction.to_pandas()) == 18
+
+
+@pytest.mark.asyncio
 async def test_predict_beyond_trained_horizon_asks_for_retraining():
     history = _small_history(n_locations=2)
     descriptor = await on_train(_small_config("xgboost"), DataFrame.from_pandas(history))
@@ -187,7 +213,7 @@ async def test_predict_beyond_trained_horizon_asks_for_retraining():
 @pytest.mark.asyncio
 async def test_predict_rejects_descriptor_from_previous_format():
     history = DataFrame.from_pandas(_small_history())
-    legacy = {"format_version": 1, "service_id": "chap-malaria-forecasting", "artifacts": {}}
+    legacy = {"format_version": 1, "service_id": "chap-disease-forecasting", "artifacts": {}}
 
     with pytest.raises(ValueError, match="retrain"):
         await on_predict(_small_config("xgboost"), legacy, history, history)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from chap_malaria_forecasting.evaluation.benchmark import run_benchmark
+from chap_disease_forecasting.evaluation.benchmark import run_benchmark
 
 
 @pytest.mark.performance

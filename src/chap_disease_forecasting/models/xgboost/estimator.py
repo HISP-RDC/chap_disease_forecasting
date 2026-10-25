@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from chap_malaria_forecasting.models.base import EngineUnavailableError, ModelNotFittedError
+from chap_disease_forecasting.models.base import EngineUnavailableError, ModelNotFittedError
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,12 @@ class XGBoostConfig:
     tree_method: str = "hist"
     n_jobs: int = 1
     random_state: int = 20261025
+    # Only for a Tweedie objective; left out of the engine parameters otherwise.
+    tweedie_variance_power: float | None = None
+
+
+def _engine_params(config: XGBoostConfig) -> dict[str, Any]:
+    return {key: value for key, value in asdict(config).items() if value is not None}
 
 
 class XGBoostRegressor:
@@ -60,7 +66,7 @@ class XGBoostRegressor:
             raise ValueError("y must contain finite non-negative observations")
         if X.shape[1] != len(feature_names):
             raise ValueError("feature_names does not match X")
-        model = xgb.XGBRegressor(**asdict(self.config))
+        model = xgb.XGBRegressor(**_engine_params(self.config))
         model.fit(X, y, verbose=False)
         self.model_ = model
         self.feature_names_ = tuple(feature_names)
@@ -97,7 +103,7 @@ class XGBoostRegressor:
             raise ValueError("incompatible XGBoost artifact metadata")
         instance = cls(XGBoostConfig(**metadata["config"]))
         xgb = instance._library()
-        model = xgb.XGBRegressor(**asdict(instance.config))
+        model = xgb.XGBRegressor(**_engine_params(instance.config))
         model.load_model(directory / "model.json")
         instance.model_ = model
         instance.feature_names_ = tuple(metadata["feature_names"])

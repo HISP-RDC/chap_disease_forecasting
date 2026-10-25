@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import numpy as np
 
-from chap_malaria_forecasting.models.base import EngineUnavailableError, ModelNotFittedError
+from chap_disease_forecasting.models.base import EngineUnavailableError, ModelNotFittedError
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,13 @@ class LightGBMConfig:
     objective: str = "poisson"
     n_jobs: int = 1
     random_state: int = 20261025
+    # Only for a Tweedie objective; left out of the engine parameters otherwise.
+    tweedie_variance_power: float | None = None
     verbosity: int = -1
+
+
+def _engine_params(config: LightGBMConfig) -> dict[str, Any]:
+    return {key: value for key, value in asdict(config).items() if value is not None}
 
 
 class LightGBMRegressor:
@@ -61,7 +67,7 @@ class LightGBMRegressor:
             raise ValueError("y must contain finite non-negative observations")
         if X.shape[1] != len(feature_names):
             raise ValueError("feature_names does not match X")
-        model = lgb.LGBMRegressor(**asdict(self.config))
+        model = lgb.LGBMRegressor(**_engine_params(self.config))
         model.fit(X, y, feature_name=list(feature_names))
         self.model_ = model
         self.feature_names_ = tuple(feature_names)

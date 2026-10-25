@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pandas.testing import assert_frame_equal
 
-from chap_malaria_forecasting.synthetic import generate_synthetic_history, preset_config
+from chap_disease_forecasting.synthetic import generate_synthetic_history, preset_config
 
 
 def test_synthetic_generator_is_reproducible_and_has_required_columns() -> None:

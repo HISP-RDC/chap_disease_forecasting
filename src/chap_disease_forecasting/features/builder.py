@@ -8,17 +8,24 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from chap_malaria_forecasting.data import ValidationConfig, validate_history
+from chap_disease_forecasting.data import ValidationConfig, validate_history
 
 
 @dataclass(frozen=True)
 class FeatureConfig:
     case_lags: tuple[int, ...] = (1, 2, 3, 4, 8, 52)
     case_windows: tuple[int, ...] = (4, 8, 12)
-    climate_lags: tuple[int, ...] = tuple(range(1, 13))
-    climate_windows: tuple[int, ...] = (4, 8, 12)
+    # Lag 0 is the origin week itself, observed when the forecast is made. Short
+    # lags matter for cholera (flooding, contamination); the 12-16 week windows
+    # cover malaria's vector and parasite development delays.
+    climate_lags: tuple[int, ...] = tuple(range(0, 13))
+    climate_windows: tuple[int, ...] = (4, 8, 12, 16)
     climate_columns: tuple[str, ...] = ("rainfall", "mean_temperature")
     include_cases_at_origin: bool = True
+    # Growth rates, current incidence and climate anomalies.
+    dynamics: bool = True
+    # Neighbour features, used only when a neighbour graph is supplied.
+    spatial: bool = True
 
 
 class WeeklyFeatureBuilder:
@@ -26,11 +33,17 @@ class WeeklyFeatureBuilder:
 
     Rolling summaries are shifted by one week. ``cases_at_origin`` is the one
     observation allowed at the forecast origin and is only used to predict
-    strictly later weeks in the direct forecasting pipeline.
+    strictly later weeks in the direct forecasting pipeline. Neighbour features
+    use the neighbours' values up to the same origin week, never later ones.
     """
 
-    def __init__(self, config: FeatureConfig | None = None):
+    def __init__(
+        self,
+        config: FeatureConfig | None = None,
+        neighbours: dict[str, list[str]] | None = None,
+    ):
         self.config = config or FeatureConfig()
+        self.neighbours_: dict[str, list[str]] = dict(neighbours or {})
         self.location_mapping_: dict[str, int] | None = None
         self.parent_mapping_: dict[str, int] | None = None
         self.feature_names_: tuple[str, ...] | None = None
@@ -107,6 +120,20 @@ class WeeklyFeatureBuilder:
             result["incidence_lag_1_per_1000"] = 1_000.0 * lag_1 / population
             result["population_missing"] = population.isna().astype(np.int8)
 
+        if self.config.dynamics:
+            log_cases = np.log1p(cases)
+            mean_4 = (
+                shifted_group.rolling(window=4, min_periods=1)
+                .mean()
+                .reset_index(level=0, drop=True)
+            )
+            result["log_growth_1w"] = log_cases - np.log1p(lag_1)
+            result["log_growth_4w"] = log_cases - np.log1p(mean_4)
+            if "population" in frame:
+                result["incidence_at_origin_per_1000"] = (
+                    1_000.0 * cases / frame["population"].astype(float)
+                )
+
         for column in self.config.climate_columns:
             if column not in frame:
                 continue
@@ -124,6 +151,18 @@ class WeeklyFeatureBuilder:
                     .mean()
                     .reset_index(level=0, drop=True)
                 )
+            if self.config.dynamics:
+                # Last four weeks up to the origin against the location's own
+                # history before them: heavy rain or heat relative to normal.
+                recent = (
+                    climate_group.rolling(window=4, min_periods=1)
+                    .mean()
+                    .reset_index(level=0, drop=True)
+                )
+                expanding = shifted_climate_group.expanding(min_periods=8)
+                normal = expanding.mean().reset_index(level=0, drop=True)
+                spread = expanding.std(ddof=0).reset_index(level=0, drop=True)
+                result[f"{column}_anomaly_4"] = (recent - normal) / spread.where(spread > 0)
 
         iso = frame["time_period"].dt.isocalendar()
         week = iso.week.astype(float)
@@ -148,5 +187,65 @@ class WeeklyFeatureBuilder:
         if "completeness" in frame:
             result["completeness_at_origin"] = frame["completeness"].astype(float)
             result["completeness_missing"] = frame["completeness"].isna().astype(np.int8)
+        if self.config.spatial and self.neighbours_:
+            result = result.join(self._neighbour_features(frame, cases))
 
         return result.astype(float)
+
+    def _neighbour_features(self, frame: pd.DataFrame, cases: pd.Series) -> pd.DataFrame:
+        """Mean incidence, recent level and growth of each location's neighbours."""
+
+        if "population" in frame:
+            level = 1_000.0 * cases / frame["population"].astype(float)
+        else:
+            level = cases
+        keyed = pd.DataFrame(
+            {
+                "time_period": frame["time_period"],
+                "location": frame["location"].astype(str),
+                "level": level,
+            }
+        )
+        wide = keyed.pivot(index="time_period", columns="location", values="level").sort_index()
+        recent = wide.rolling(window=4, min_periods=1).mean()
+        previous = wide.shift(1).rolling(window=4, min_periods=1).mean()
+        growth = pd.DataFrame(
+            np.log1p(wide.to_numpy(dtype=float)) - np.log1p(previous.to_numpy(dtype=float)),
+            index=wide.index,
+            columns=wide.columns,
+        )
+
+        columns = list(wide.columns)
+        position = {name: index for index, name in enumerate(columns)}
+        weights = np.zeros((len(columns), len(columns)), dtype=float)
+        for name, neighbours in self.neighbours_.items():
+            if name not in position:
+                continue
+            for neighbour in neighbours:
+                if neighbour in position:
+                    weights[position[name], position[neighbour]] = 1.0
+
+        def neighbour_mean(values: pd.DataFrame) -> pd.DataFrame:
+            matrix = values.to_numpy(dtype=float)
+            observed = np.isfinite(matrix)
+            total = np.where(observed, matrix, 0.0) @ weights.T
+            count = observed.astype(float) @ weights.T
+            with np.errstate(invalid="ignore", divide="ignore"):
+                mean = np.where(count > 0, total / count, np.nan)
+            return pd.DataFrame(mean, index=values.index, columns=columns)
+
+        aggregates = {
+            "neighbours_incidence": neighbour_mean(wide),
+            "neighbours_incidence_mean_4": neighbour_mean(recent),
+            "neighbours_log_growth_4w": neighbour_mean(growth),
+        }
+        output = pd.DataFrame(index=frame.index)
+        rows = pd.MultiIndex.from_arrays([keyed["time_period"], keyed["location"]])
+        for name, table in aggregates.items():
+            stacked = table.stack(future_stack=True)
+            output[name] = stacked.reindex(rows).to_numpy()
+        output["neighbours_pressure"] = np.log1p(output["neighbours_incidence_mean_4"]) - np.log1p(
+            level.to_numpy()
+        )
+        output["neighbours_missing"] = output["neighbours_incidence"].isna().astype(np.int8)
+        return output

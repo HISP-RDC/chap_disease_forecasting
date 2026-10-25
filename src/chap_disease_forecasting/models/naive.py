@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from chap_malaria_forecasting.data import add_iso_weeks, validate_history
+from chap_disease_forecasting.data import add_iso_weeks, validate_history
 
 
 def _forecast_rows(

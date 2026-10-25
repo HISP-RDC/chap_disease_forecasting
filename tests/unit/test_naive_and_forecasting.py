@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from chap_malaria_forecasting.models import PersistenceForecaster, SeasonalNaiveForecaster
-from chap_malaria_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
+from chap_disease_forecasting.models import PersistenceForecaster, SeasonalNaiveForecaster
+from chap_disease_forecasting.synthetic import SyntheticConfig, generate_synthetic_history
 
 
 def _history() -> pd.DataFrame:

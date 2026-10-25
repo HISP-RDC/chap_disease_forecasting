@@ -49,7 +49,7 @@ jobs:
         run: uv run mypy src
 
       - name: Unit, temporal, integration, contract, and performance tests
-        run: uv run pytest --junitxml=junit.xml --cov=chap_malaria_forecasting --cov-report=term-missing --cov-report=xml
+        run: uv run pytest --junitxml=junit.xml --cov=chap_disease_forecasting --cov-report=term-missing --cov-report=xml
 
       - name: Audit the locked Python dependency graph
         run: |
@@ -107,7 +107,7 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: chap-malaria-forecasting:ci
+          tags: chap-disease-forecasting:ci
           build-args: |
             GIT_REVISION=${{ github.sha }}
             APP_VERSION=${{ github.ref_name }}
@@ -118,34 +118,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          image_user="$(docker image inspect chap-malaria-forecasting:ci --format '{{.Config.User}}')"
+          image_user="$(docker image inspect chap-disease-forecasting:ci --format '{{.Config.User}}')"
           test "${image_user}" = "chapkit:chapkit"
           # A new named volume is populated from the image's /work/data, which
           # keeps its chapkit ownership, exactly as Compose and chap-admin mount
           # it. A tmpfs would be root-owned and unwritable for the service user.
-          docker volume create chap-malaria-smoke-data >/dev/null
+          docker volume create chap-disease-smoke-data >/dev/null
           # No --rm: a container that exits early must stay inspectable.
           smoke_id="$(docker run --detach \
-            --name chap-malaria-smoke \
+            --name chap-disease-smoke \
             --platform linux/amd64 \
             --network none \
             --read-only \
             --cap-drop ALL \
             --security-opt no-new-privileges \
             --tmpfs /tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777 \
-            --mount type=volume,src=chap-malaria-smoke-data,dst=/work/data \
+            --mount type=volume,src=chap-disease-smoke-data,dst=/work/data \
             --env DATABASE_URL=sqlite+aiosqlite:////work/data/chapkit.db \
             --env CHAPKIT_TEMP_DIR=/tmp/chapkit \
-            chap-malaria-forecasting:ci)"
+            chap-disease-forecasting:ci)"
           cleanup() {
             docker logs "${smoke_id}" || true
             docker rm --force "${smoke_id}" >/dev/null 2>&1 || true
-            docker volume rm chap-malaria-smoke-data >/dev/null 2>&1 || true
+            docker volume rm chap-disease-smoke-data >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           healthy=false
           for attempt in $(seq 1 30); do
-            if docker exec "${smoke_id}" python /usr/local/lib/chap-malaria-healthcheck.py; then
+            if docker exec "${smoke_id}" python /usr/local/lib/chap-disease-healthcheck.py; then
               healthy=true
               break
             fi
@@ -158,7 +158,7 @@ jobs:
           "${healthy}"
           # Train and predict with both engines inside the image: a healthy
           # /health does not prove that native libraries (libgomp) load.
-          result="$(docker exec "${smoke_id}" chap-malaria-benchmark \
+          result="$(docker exec "${smoke_id}" chap-disease-benchmark \
             --zones 10 --engine auto --through-service --n-estimators 10)"
           echo "${result}"
           # Application logs share stdout; the benchmark result is the last line.
