@@ -55,8 +55,15 @@ covariates:
 # Filled by deploy/pin_release.py once CI has published the image and the
 # acceptance tests in docs/PRODUCTION_DEPLOYMENT.md have passed. Until then
 # `chap-admin install` refuses the entry ("no verified stable version").
-channels: {}
-versions: []
+channels:
+  stable: 0.4.0
+  latest: 0.4.0
+versions:
+- version: 0.4.0
+  commit: c9dc751572ae7d080efe58f85d2af5dbb699ccdc
+  image_tag: sha-c9dc751
+  chapkit: '>=2.4.1,<3'
+  status: verified
 
 # Each configuration becomes one configured model in CHAP, named
 # "chap-disease-forecasting:<key>". The Modeling App lists it as
