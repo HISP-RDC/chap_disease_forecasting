@@ -118,6 +118,17 @@ uv run chap-disease-compare --disease cholera --zones 100 --weeks 196
 uv run chap-disease-compare --disease malaria --zones 100 --weeks 196
 ```
 
+## 4b. First result on real data (cholera, 63 zones)
+
+Same 63 zones, same 7 splits (2026-W32 to W38), horizon 3, metrics computed by
+CHAP. 0.4.0 Best of both (LightGBM selected) against the EWARS template:
+CRPS 2.293 vs 10.939 (-79 %), MAE 2.669 vs 4.674 (-43 %), RMSE 17.49 vs
+21.51, interval score 80 % 15.21 vs 183.98 (-92 %), coverage 80 % 0.884 vs
+1.000, coverage 50 % 0.747 vs 0.985, ratio_above_truth 0.474 vs 0.228. The
+intervals of this model are too wide by about 8 points at 80 % and 25 points
+at 50 %: the case for roadmap item 3 (recalibration). Paired, forecast-level
+evidence: `deploy/compare_backtests.py <this model's backtest> <reference>`.
+
 ## 5. Limits
 
 - Synthetic data only. The decisive test is a CHAP backtest (7 splits, horizon

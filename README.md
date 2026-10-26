@@ -125,6 +125,35 @@ The synthetic processes are built to exercise the software and are not
 evidence about real epidemics; method, sources and full results are in
 [docs/MODEL_IMPROVEMENTS.md](docs/MODEL_IMPROVEMENTS.md).
 
+### First result on real data: cholera, 63 health zones (DRC)
+
+CHAP backtests on the same 63 zones and the same 7 splits (weeks 2026-W32 to
+W38, 3 weeks ahead), with the metrics computed by CHAP itself. Version 0.4.0,
+Best of both (LightGBM selected, Tweedie, neighbours for all 63 zones), against
+CHAP's EWARS template (R-INLA, `n_lags=3`, `precision=1`):
+
+| Metric | Target | This model | EWARS template | Difference |
+|---|---|---|---|---|
+| CRPS | lower | **2.293** | 10.939 | -79 % |
+| CRPS (log scale) | lower | **0.091** | 0.301 | -70 % |
+| MAE | lower | **2.669** | 4.674 | -43 % |
+| RMSE | lower | **17.49** | 21.51 | -19 % |
+| Interval score 80 % (Winkler) | lower | **15.21** | 183.98 | -92 % |
+| Interval score 50 % (Winkler) | lower | **10.57** | 40.60 | -74 % |
+| Coverage 80 % | 0.80 | 0.884 | 1.000 | |
+| Coverage 50 % | 0.50 | 0.747 | 0.985 | |
+| ratio_above_truth | about 0.5 | 0.474 | 0.228 | |
+| Backtest duration | | 1 min 15 s | 4 min 05 s | |
+
+EWARS reaches full coverage only through very wide intervals, which its
+interval score penalises; this model's intervals are much narrower but still
+somewhat too wide (0.88 and 0.75 against 0.80 and 0.50). One dataset and 7
+evaluated weeks (about 1,300 forecasts) are a first signal, not a general
+proof; the EWARS template is the deprecated MLproject version, in one
+configuration. To test the difference forecast by forecast, run
+`deploy/compare_backtests.py` (paired CRPS and MAE, zone bootstrap confidence
+intervals, sign test over zones) on the two backtest ids.
+
 ## Compatibility
 
 | Component      | Version                                                       |
@@ -504,16 +533,16 @@ after which `chap-admin install chap_disease_forecasting` works without
 
 ## Limitations
 
-- Forecast skill is measured on synthetic data only (see
-  [Evaluation](#evaluation)); it is unknown on real malaria or cholera data.
+- Forecast skill on real data rests so far on one cholera backtest (63 zones,
+  7 weeks); real malaria results for 0.4 are pending (see [Evaluation](#evaluation)).
 - Samples come from empirical errors and are not calibrated; check coverage
   and CRPS in CHAP's backtest before relying on intervals.
 - Neighbours are the nearest zones by centroid distance; links along rivers or
   roads between distant zones are not modelled.
 - Weeks must be contiguous per location in the history sent by CHAP.
 - Locations not present in the training history cannot be forecast.
-- The earlier 0.3 model ran on a live CHAP 2.4.0 with the Modeling App,
-  backtesting 519 health zones; 0.4 has so far run in CI and locally only.
+- 0.3 ran on a live CHAP 2.4.0 with the Modeling App on 519 health zones;
+  0.4 has run there on 63 cholera zones so far.
 
 See [docs/MODEL_IMPROVEMENTS.md](docs/MODEL_IMPROVEMENTS.md) for the research,
 evaluation and roadmap, and [docs/IMPLEMENTATION_REPORT.md](docs/IMPLEMENTATION_REPORT.md)
