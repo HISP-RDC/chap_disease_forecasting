@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "chap-disease-forecasting"
-version = "0.4.0"
+version = "0.4.1"
 description = "Weekly forecasting of climate-sensitive diseases (malaria, cholera) for CHAP, with XGBoost, LightGBM and controlled model selection"
 readme = "README.md"
 license = "AGPL-3.0-or-later"

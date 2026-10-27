@@ -65,10 +65,15 @@ log = structlog.get_logger()
 
 SERVICE_ID = "chap-disease-forecasting"
 REPOSITORY_URL = HttpUrl("https://github.com/HISP-RDC/chap_disease_forecasting")
-MODEL_VERSION = "0.4.0"
+MODEL_VERSION = "0.4.1"
 # 3: neighbour graph and log-scale residual pools in the training descriptor.
 DESCRIPTOR_VERSION = 3
 SUPPORTED_ENGINES = ("xgboost", "lightgbm")
+# Forecast values sent to CHAP are rounded to hundredths of a case. Near-zero
+# Tweedie forecasts otherwise yield values such as 6.58e-7, which the DHIS2
+# Modeling App writes in exponent notation and DHIS2 rejects as a NUMBER
+# (E8122 value_not_numeric), blocking the import of a whole prediction.
+OUTPUT_DECIMALS = 2
 # CHAP Core 2.4.0 asks for 12 periods on weekly data when a prediction does not
 # set its own horizon (db_worker_functions._get_n_periods).
 MAX_PREDICTION_PERIODS = 12
@@ -476,6 +481,7 @@ def _align_to_future(future: pd.DataFrame, predictions: pd.DataFrame) -> pd.Data
         missing = merged.loc[merged[sample_columns].isna().any(axis=1), ["location", "time_period"]]
         preview = missing.head(5).to_dict("records")
         raise ValueError(f"no forecast produced for future rows: {preview}")
+    merged[sample_columns] = merged[sample_columns].round(OUTPUT_DECIMALS).clip(lower=0.0)
     return merged.drop(columns=["_normalized_period"])
 
 

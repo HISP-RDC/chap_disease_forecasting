@@ -217,3 +217,25 @@ async def test_predict_rejects_descriptor_from_previous_format():
 
     with pytest.raises(ValueError, match="retrain"):
         await on_predict(_small_config("xgboost"), legacy, history, history)
+
+
+def test_values_sent_to_chap_never_need_exponent_notation():
+    # DHIS2 rejected a whole prediction import over one value, 6.584875126557921e-7
+    # (E8122 value_not_numeric): JavaScript writes numbers below 1e-6 as "6.58e-7".
+    from chap_disease_forecasting.chapkit_adapter.service import _align_to_future
+
+    future = pd.DataFrame({"location": ["A", "B", "C"], "time_period": ["2026-W40"] * 3})
+    predictions = pd.DataFrame(
+        {
+            "location": ["A", "B", "C"],
+            "time_period": ["2026-W40"] * 3,
+            "sample_0": [6.584875126557921e-7, 0.004, 12.3456],
+            "sample_1": [0.0049, 3.333333, 1e-12],
+        }
+    )
+    output = _align_to_future(future, predictions)
+
+    assert output["sample_0"].tolist() == [0.0, 0.0, 12.35]
+    assert output["sample_1"].tolist() == [0.0, 3.33, 0.0]
+    values = output[["sample_0", "sample_1"]].to_numpy().ravel()
+    assert not ((values > 0) & (values < 0.01)).any()

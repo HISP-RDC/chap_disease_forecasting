@@ -151,4 +151,8 @@ def test_core_style_train_predict_and_restart(tmp_path, monkeypatch, engine, per
     assert set(first["location"]) == set(history["location"].astype(str))
     assert np.isfinite(first[samples].to_numpy(dtype=float)).all()
     assert (first[samples].to_numpy(dtype=float) >= 0).all()
+    # Hundredths of a case at most, so DHIS2 never receives exponent notation.
+    np.testing.assert_array_equal(
+        first[samples].to_numpy(dtype=float), first[samples].to_numpy(dtype=float).round(2)
+    )
     pd.testing.assert_frame_equal(first, second)
