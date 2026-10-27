@@ -56,12 +56,17 @@ covariates:
 # acceptance tests in docs/PRODUCTION_DEPLOYMENT.md have passed. Until then
 # `chap-admin install` refuses the entry ("no verified stable version").
 channels:
-  stable: 0.4.0
-  latest: 0.4.0
+  stable: 0.4.1
+  latest: 0.4.1
 versions:
 - version: 0.4.0
   commit: c9dc751572ae7d080efe58f85d2af5dbb699ccdc
   image_tag: sha-c9dc751
+  chapkit: '>=2.4.1,<3'
+  status: verified
+- version: 0.4.1
+  commit: a85eb995cc4204f6709b279c7565fbad8fc39959
+  image_tag: sha-a85eb99
   chapkit: '>=2.4.1,<3'
   status: verified
 
